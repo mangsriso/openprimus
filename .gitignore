@@ -73,3 +73,9 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 _seed.bin
 *.log
+
+# Private device/network captures
+captures/
+private/
+*.pcap
+*.pcapng

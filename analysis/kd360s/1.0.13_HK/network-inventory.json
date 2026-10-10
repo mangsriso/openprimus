@@ -1,0 +1,39 @@
+{
+  "image_sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+  "inventory_known_functions": 6375,
+  "inventory_call_edges": 30352,
+  "application_range": [
+    "0x42003000",
+    "0x42024344"
+  ],
+  "application_functions_decompiled": 331,
+  "application_call_sites": 4333,
+  "application_unresolved_call_sites": [
+    {
+      "owner": "4200be5c",
+      "site": "4200c756",
+      "flow": "callx8",
+      "target": "UNRESOLVED",
+      "reference_type": "COMPUTED_CALL"
+    },
+    {
+      "owner": "4201cfb0",
+      "site": "4201d1a9",
+      "flow": "callx8",
+      "target": "UNRESOLVED",
+      "reference_type": "COMPUTED_CALL"
+    },
+    {
+      "owner": "4201cfb0",
+      "site": "4201d1bd",
+      "flow": "callx8",
+      "target": "UNRESOLVED",
+      "reference_type": "COMPUTED_CALL"
+    }
+  ],
+  "all_strings_count": 19570,
+  "primary_base": "https://wpmfirmwareprod.blob.core.windows.net/firmware/",
+  "fallback_base": "https://wpm-firmware-updates-g9hfehacbzaphxfj.a01.azurefd.net/firmware/",
+  "manifest_path": "KD360S/KD360S_FW_lists.txt",
+  "scan_scope": "All known Ghidra functions at inventory snapshot; not all possible function boundaries or runtime branches."
+}

@@ -1,0 +1,42 @@
+{
+  "firmware": "KD360S_OTA_1.0.13_HK_20260630.bin",
+  "sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+  "bytes": 3829152,
+  "chip_id": 9,
+  "segment_count": 5,
+  "segment_payload_end": 3829112,
+  "checksum_end": 3829120,
+  "checksum_valid": true,
+  "appended_sha256_valid": true,
+  "bytes_after_appended_hash": 0,
+  "reset_wifi_values_are_empty_strings": true,
+  "nvs_blob_bytes": {
+    "Settings/Record": 95,
+    "UserData/CoffeeProfile": 7250,
+    "UserData/HistoryProfile": 1450
+  },
+  "profile_record_bytes": 145,
+  "history_slots": 10,
+  "functions": {
+    "wifi_load": "4200605c",
+    "reset_machine_settings_and_wifi": "420040ac",
+    "reset_menu_event": "4201f124",
+    "machine_menu_event": "4201e164",
+    "updater_event": "4201bda8",
+    "updater_render": "4201c164",
+    "updater_exit_disconnect": "4201bd80",
+    "scan_screen_create": "4201fab0",
+    "uart_frame_parser": "4200545c",
+    "loop": "4200cc98",
+    "persist_settings_profiles": "420069d0",
+    "history_insert": "42004b78",
+    "pressure_calibration": "42003da4",
+    "brew_start": "42005918",
+    "brew_state_machine": "420088d8"
+  },
+  "limits": [
+    "Static analysis of public image, not a flash dump of the real machine.",
+    "No hardware, NVS, secure boot, or recorder validation performed.",
+    "No live shot export interface found in inspected paths."
+  ]
+}

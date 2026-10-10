@@ -1,5 +1,20 @@
 # WPM Primus (KD360X) — Firmware Reverse-Engineering & Open-Source Firmware
 
+> **KD360S / Primus Slim fork:** This fork adds a pinned analysis workflow for
+> **KD360S 1.0.13_HK**. Start with [Slim findings](docs/KD360S_1.0.13_HK.md)
+> and the [shot capture roadmap](docs/KD360S_CAPTURE_PLAN.md).
+> There is no working Slim shot recorder or validated Slim replacement firmware yet.
+> The upstream documentation below describes **KD360X**. Its addresses, pins,
+> NVS interpretations and security claims are not evidence for KD360S.
+
+```bash
+# Python 3.9+, standard library only; no connection to the machine
+python3 scripts/kd360s_firmware.py fetch
+python3 scripts/kd360s_firmware.py verify
+python3 scripts/kd360s_firmware.py extract
+python3 -m unittest discover -s tests -v
+```
+
 Reverse-engineering documentation and tooling for the **WPM Primus** espresso
 machine firmware (model **KD360X**, an ESP32-S3 based lever/paddle machine with
 pressure & flow profiling), plus an architecture for an **open-source
@@ -80,7 +95,7 @@ shipped.
 
 ### Prerequisites
 - **Docker** (for Ghidra — no local install needed)
-- Python 3.10+ with `esptool` and `capstone`:
+- Python 3.9+ with `esptool` and `capstone`:
   ```bash
   pip install esptool capstone   # use capstone>=6.0.0a* for Xtensa support
   ```

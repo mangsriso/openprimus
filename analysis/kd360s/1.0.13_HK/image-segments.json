@@ -1,0 +1,52 @@
+{
+  "filename": "KD360S_OTA_1.0.13_HK_20260630.bin",
+  "size": 3829152,
+  "sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+  "chip_id": 9,
+  "entry_point": "0x403777d8",
+  "payload_end": 3829112,
+  "checksum_offset": 3829119,
+  "appended_sha256_offset": 3829120,
+  "segments": [
+    {
+      "index": 0,
+      "filename": "seg00_0x3c110020.bin",
+      "address": "0x3c110020",
+      "offset": 32,
+      "size": 2651708,
+      "sha256": "5fb0f16fe680d658338ec5a6117f09c18b1e4a92b14bb352fd8d4695e6e0a334"
+    },
+    {
+      "index": 1,
+      "filename": "seg01_0x3fc96990.bin",
+      "address": "0x3fc96990",
+      "offset": 2651748,
+      "size": 24316,
+      "sha256": "8714da27226a08091a7c3e71cc4e19c65ad00b08bfa5bb8de40701e0d092625a"
+    },
+    {
+      "index": 2,
+      "filename": "seg02_0x40374000.bin",
+      "address": "0x40374000",
+      "offset": 2676072,
+      "size": 10928,
+      "sha256": "f474572e388b3ddab27b32b5d4e1ffe0bda19203f4b5a52e49a16ce0b1a76483"
+    },
+    {
+      "index": 3,
+      "filename": "seg03_0x42000020.bin",
+      "address": "0x42000020",
+      "offset": 2687008,
+      "size": 1076852,
+      "sha256": "2de6a9ca96ec3c518cb95221fecba54b0259c37a55b4a50ddae7c7da48622ee8"
+    },
+    {
+      "index": 4,
+      "filename": "seg04_0x40376ab0.bin",
+      "address": "0x40376ab0",
+      "offset": 3763868,
+      "size": 65244,
+      "sha256": "fa57de0fa67e165c92169d1d49542029b4ed5fb02e43e551382f21dcfc4fa7b7"
+    }
+  ]
+}
