@@ -1,0 +1,21 @@
+{
+  "status": "offline_only",
+  "hardware_verified": false,
+  "ready_to_flash": false,
+  "host_tests_passed": 80,
+  "snapshot_payload_bytes": 1338,
+  "data_bytes": 0,
+  "bss_bytes": 0,
+  "unresolved_symbols": [],
+  "remaining_relocations": [],
+  "entry_stack_frame_bytes": 128,
+  "network_worker_stack_frame_bytes": 112,
+  "stack_frames_exclude_callees": true,
+  "ring_host_concurrent_deliveries": 50000,
+  "reference_collector": "192.0.2.1:47653",
+  "reference_image_sha256": "30fca549b462afe9733114236f1152a73eb95e51fcd3f11324c8dd5f5a9b0df4",
+  "reference_image_size": 3830512,
+  "elf_sha256": "03b43de04447fd6dfefb20e2e819c6735272b61789e3542c9b2fae8cae62f548",
+  "reverse_to_pinned_stock": true,
+  "tests_are_not_runtime_control_validation": true
+}

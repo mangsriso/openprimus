@@ -98,3 +98,33 @@ Next proof: establish a post-setup initialization boundary and network ownership
 then an owned buffer/task context and an outbound sender. Device backup,
 partition/security inspection and recovery preparation remain prerequisites for
 deploying an experimental image.
+
+## Experimental snapshot imports
+
+The [snapshot payload](../experiments/kd360s_snapshot/snapshot.c) adds these
+source-correlated addresses. They are fixed to the pinned image, not a stable API.
+
+| Address | Identity and evidence |
+| --- | --- |
+| `403846c8` / `403846e8` | malloc/free wrappers; forward to `heap_caps_malloc_default` at `40378738` and heap free at `40378898`. |
+| `42094a18` | `esp_fill_random`; function-name assertion, byte-copy loop and calls to random generator `40378c0c`. |
+| `42082b44` | lwIP socket; Arduino WiFiUDP beginPacket calls it with `(2, 2, 0)`. |
+| `42082978` | lwIP sendto; WiFiUDP endPacket passes socket, buffer, length, flags, sockaddr and 16-byte length. |
+| `42082884` | lwIP recvfrom; WiFiUDP parsePacket passes a buffer, flag 8 and source sockaddr/length. |
+| `420826b0` | lwIP close; function-name assertion and socket/netconn cleanup. |
+| `4206617c` / `42066198` | Arduino millis/delay, correlated with stock call sites. |
+
+The SDK [WiFiUDP implementation](https://github.com/espressif/arduino-esp32/blob/2.0.14/libraries/WiFi/src/WiFiUdp.cpp)
+and [lwIP socket layout](https://github.com/espressif/esp-lwip/blob/2.1.3-esp/src/include/lwip/sockets.h)
+corroborate the call shapes. The binary recvfrom helper explicitly handles flag 8
+as nonblocking. Credentials are String objects at `3fc9ff3c` and `3fc9ff2c`;
+post-setup code copies their inline or heap contents before starting the worker.
+
+An early unconfirmed guess that `420e241c` was an allocation entry was rejected
+by further decompilation; the payload uses the wrapper at `403846c8` instead.
+
+Instruction memory must not supply byte-accessed constants. The task name is
+constructed in owned stack RAM, and the linker rejects nonempty `.rodata`, `.data`
+and `.bss`. This follows the S3
+[memory-access restriction](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32s3/api-guides/memory-types.html).
+The actual emitted payload and import behavior still need runtime validation.

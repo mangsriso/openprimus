@@ -1,6 +1,7 @@
 # KD360S stock-firmware instrumentation plan
 
-Status: selected investigation route; no working modified image yet.
+Status: an [experimental snapshot package](KD360S_SNAPSHOT_TEST.md) now builds
+and passes host tests. Modified-image boot and machine behavior are untested.
 
 Offline progress: [runtime function matching](KD360S_RUNTIME_IMPORTS.md) now
 identifies station begin/status/disconnect and task creation. An

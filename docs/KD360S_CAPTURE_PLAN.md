@@ -37,10 +37,11 @@ review found float32 flow and a TX checksum loop that pseudocode misrepresented.
 A later diagnostic override also disproved a proposed direct mapping from TX
 activity code to brew-active state, so the decoder exports raw codes only.
 
-Live acquisition has no validated source yet. The known passive
+Live acquisition has no hardware-validated source yet. The known passive
 UART mapping lacks numeric actual pressure and unambiguous shot boundaries. The
 archive is useful offline but does not complete the every-shot recorder or the
-hardware validation stages below. No modified firmware has been built or flashed.
+hardware validation stages below. An [experimental snapshot image](KD360S_SNAPSHOT_TEST.md) has now been built
+and verified offline. It has not been flashed or tested on the machine.
 
 The next instrumentation milestone now has a
 [runtime import map](KD360S_RUNTIME_IMPORTS.md), a compiled
