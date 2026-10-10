@@ -22,6 +22,20 @@ readings. `chart.yaml` is a RAM display buffer, not a durable shot recorder.
 | Real-time `primus_brew` controller | Later unless data access requires it | Confirm complete control behavior and hardware before considering deployment. |
 | Gauges / charts | Reuse after recording works | Drive displays from stored actual measurements rather than simulator values. |
 
+## Current status
+
+The pinned firmware workflow is complete. The next offline milestone now includes
+an [RX/TX contract](KD360S_UART.md), a [bounded lifecycle table](KD360S_LIFECYCLE.md),
+and a tested [raw capture archive and decoder](KD360S_CAPTURE_TOOL.md). Protocol
+review found float32 flow and a TX checksum loop that pseudocode misrepresented.
+A later diagnostic override also disproved a proposed direct mapping from TX
+activity code to brew-active state, so the decoder exports raw codes only.
+
+Live acquisition is still blocked by an unvalidated source. The known passive
+UART mapping lacks numeric actual pressure and unambiguous shot boundaries. The
+archive is useful offline but does not complete the every-shot recorder or the
+hardware validation stages below. No modified firmware has been built or flashed.
+
 ## Ordered investigation
 
 1. **Reproducible baseline (this change):** pinned download, verify and extraction;

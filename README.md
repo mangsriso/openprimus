@@ -3,7 +3,8 @@
 > **KD360S / Primus Slim fork:** This fork adds a pinned analysis workflow for
 > **KD360S 1.0.13_HK**. Start with [Slim findings](docs/KD360S_1.0.13_HK.md)
 > and the [shot capture roadmap](docs/KD360S_CAPTURE_PLAN.md).
-> There is no working Slim shot recorder or validated Slim replacement firmware yet.
+> An [offline capture archive and decoder](docs/KD360S_CAPTURE_TOOL.md) is available.
+> There is no validated live Slim shot recorder or replacement firmware yet.
 > The upstream documentation below describes **KD360X**. Its addresses, pins,
 > NVS interpretations and security claims are not evidence for KD360S.
 

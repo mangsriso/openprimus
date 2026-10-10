@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-11",
+  "fixture": "examples/kd360s-synthetic.jsonl",
+  "source_kind": "synthetic",
+  "first_import": {
+    "imported": 5,
+    "replayed": 0
+  },
+  "replay_import": {
+    "imported": 0,
+    "replayed": 5
+  },
+  "frames": 2,
+  "jsonl_rows": 9,
+  "csv_rows": 9,
+  "rx_flow_wire_float": 1.25,
+  "gap_diagnostic": true,
+  "inferred_brew_active_field_present": false,
+  "hardware_validation": false
+}

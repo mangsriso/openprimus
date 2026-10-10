@@ -79,3 +79,9 @@ captures/
 private/
 *.pcap
 *.pcapng
+
+# Local capture archives and SQLite sidecars
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
