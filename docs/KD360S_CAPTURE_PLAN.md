@@ -1,11 +1,17 @@
 # KD360S continuous shot capture roadmap
 
-## Decision: reuse upstream, prioritize the data path
+## Decision: instrument stock firmware for persistent export
 
 Build on openprimus's analysis tools and documentation, with model-specific
 addresses and evidence. The immediate goal is to capture every new shot's actual
 measurements. Implementing an entire replacement controller first would add
 unverified actuation, display and calibration work before proving data export.
+
+The owner accepts modified firmware. Prioritize a reproducible stock-binary
+instrumentation proof that connects during normal operation and exports actual
+measurements. Passive UART capture is supporting validation, not a prerequisite
+for this offline work. See the [firmware instrumentation plan](KD360S_INSTRUMENTATION.md)
+for candidate hooks, connection work and the first hardware experiment.
 
 Baseline reviewed: upstream commit `33e061054d80e72c24fe27e2a3ab973a850188b1`.
 Its [roadmap](../README.md#-status--roadmap) targets KD360X replacement firmware.
@@ -31,7 +37,7 @@ review found float32 flow and a TX checksum loop that pseudocode misrepresented.
 A later diagnostic override also disproved a proposed direct mapping from TX
 activity code to brew-active state, so the decoder exports raw codes only.
 
-Live acquisition is still blocked by an unvalidated source. The known passive
+Live acquisition has no validated source yet. The known passive
 UART mapping lacks numeric actual pressure and unambiguous shot boundaries. The
 archive is useful offline but does not complete the every-shot recorder or the
 hardware validation stages below. No modified firmware has been built or flashed.
@@ -45,14 +51,15 @@ hardware validation stages below. No modified firmware has been built or flashed
    value writers, and complete start/end/abort transitions for supported modes.
    Reimplement only the observed frame decoder with synthetic fixtures and
    label unknowns explicitly. Do not invent captured samples.
-3. **Prove an export transport:** stock network paths inspected so far do not
-   expose one. Evaluate debug output, passive internal UART and minimal firmware
-   instrumentation against the required fields. Passive UART is not yet known
-   to expose actual pressure. Instrumentation would need a separate validation
-   plan for image acceptance, runtime impact and recovery before use on hardware.
-4. **Build the recorder once a real source exists:** durable append, shot IDs,
+3. **Prove stock-firmware instrumentation offline:** establish the independent
+   runtime Wi-Fi connection path, executable payload placement, calling convention
+   and snapshot/lifecycle hooks. Produce a reproducible patch with exact input and
+   hook-byte checks before planning a deployment. Keeping Wi-Fi connected alone
+   does not provide an exporter. Do not call the blocking updater from the sampler.
+4. **Build the recorder alongside the producer contract:** durable append, shot IDs,
    timestamps, sequence numbers, explicit gaps, reconnect/replay deduplication,
-   and CSV/JSON export. UI consumes the archive rather than owning persistence.
+   and CSV/JSON export. Exercise these with a synthetic producer while integrating
+   the real source. UI consumes the archive rather than owning persistence.
 5. **Validate on the machine when available:** cross-check units/timing and all
    supported brew modes, aborted shots, reconnects, recorder restart and buffering
    limits. Document exactly which outages can be recovered.
