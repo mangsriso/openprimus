@@ -151,6 +151,13 @@ sudo apt install libsdl2-dev        # one-time (Linux). macOS: brew install sdl2
 
 `run_sim.sh` handles the venv, ESPHome install, and launch in one go.
 
+To record simulated shots through the real UDP collector and export CSV/JSONL,
+run `python3 scripts/kd360s_sim.py run`. The launcher prints a local HTML report
+with graphs from archived pressure and flow samples. See
+[Capture simulated shots](docs/KD360S_SIM_CAPTURE.md) for setup, completeness
+states, and the automated two-shot scenario. This tests the host data path;
+it does not emulate the stock Slim firmware.
+
 **Key decisions** (full rationale in
 [`docs/OPEN_SOURCE_ESPHOME_ARCHITECTURE.md`](docs/OPEN_SOURCE_ESPHOME_ARCHITECTURE.md)):
 

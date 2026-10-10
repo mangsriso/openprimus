@@ -92,7 +92,7 @@ lvgl:
             max_value: 12
             mode: NORMAL
             start_angle: 135
-            end_angle: 135          # grows clockwise as pressure rises
+            end_angle: 45
             indicator:
               line_color: 0x4FC3F7
               line_width: 8
@@ -110,35 +110,7 @@ lvgl:
             width: 140
             height: 40
             on_click:
-              - globals.set:
-                  id: brew_active
-                  value: !lambda "return !id(brew_active);"
-              - if:
-                  condition:
-                    lambda: "return id(brew_active);"
-                  then:
-                    # Reset shot weight + chart history for a fresh brew.
-                    - globals.set:
-                        id: brew_weight_val
-                        value: "0.0"
-                    - globals.set:
-                        id: _chart_count
-                        value: "0"
-                    - lvgl.label.update:
-                        id: status_label
-                        text: "Heating up..."
-                    - lvgl.button.update:
-                        id: brew_btn
-                        text: "\U0000E047 Stop"
-                    - logger.log: "Brew STARTED"
-                  else:
-                    - lvgl.label.update:
-                        id: status_label
-                        text: "Stopped"
-                    - lvgl.button.update:
-                        id: brew_btn
-                        text: "\U0000E037 Start"
-                    - logger.log: "Brew STOPPED"
+              - script.execute: brew_toggle
 
         - button:
             text: "Back"
@@ -148,13 +120,60 @@ lvgl:
             width: 120
             height: 36
             on_click:
-              - globals.set:
-                  id: brew_active
-                  value: "false"
-              - lvgl.label.update:
-                  id: status_label
-                  text: "Ready - press Start"
-              - lvgl.page.show: home_page
+              - script.execute: brew_back
+
+script:
+  - id: brew_toggle
+    then:
+      - if:
+          condition:
+            lambda: return !id(brew_active);
+          then:
+            - lambda: |-
+                id(brew_active) = true;
+                id(brew_start_ms) = millis();
+                id(_elapsed_val) = 0;
+                id(brew_weight_val) = 0;
+                id(brew_pressure_val) = 0;
+                id(sim_pressure).publish_state(0);
+                id(sim_flow_rate).publish_state(0);
+                id(sim_shot_weight).publish_state(0);
+                id(_press_val) = 0;
+                id(_chart_count) = 0;
+                id(_phase_str) = "Starting...";
+                #ifdef USE_HOST
+                primus_sim::capture().begin(id(current_mode),
+                    {0, 0, id(target_pressure).state, NAN, true}, millis());
+                #endif
+            - lvgl.button.update:
+                id: brew_btn
+                text: "\U0000E047 Stop"
+          else:
+            - script.execute: brew_stop
+  - id: brew_stop
+    then:
+      - lambda: |-
+          if (id(brew_active)) {
+            id(_elapsed_val) = (millis() - id(brew_start_ms)) / 1000.0f;
+            #ifdef USE_HOST
+            primus_sim::capture().end("stop", {id(sim_pressure).state,
+                id(sim_flow_rate).state, id(target_pressure).state, NAN, true}, millis());
+            #endif
+          }
+          id(brew_active) = false;
+          id(_phase_str) = "Stopped";
+      - lvgl.button.update:
+          id: brew_btn
+          text: "\U0000E037 Start"
+  - id: brew_back
+    then:
+      - lambda: |-
+          #ifdef USE_HOST
+          primus_sim::capture().end("back", {id(sim_pressure).state,
+              id(sim_flow_rate).state, id(target_pressure).state, NAN, id(brew_active)}, millis());
+          #endif
+      - script.execute: brew_stop
+      - lvgl.page.show: home_page
 
 # ---------------------------------------------------------------------------
 # Live updates — guarded: NaN-check every value, return float for arc value.
@@ -208,10 +227,11 @@ interval:
             - lvgl.label.update:
                 id: status_label
                 text: !lambda |-
-                  if (id(brew_active)) {
-                    return id(_phase_str).c_str();
-                  }
-                  return (const char *) "Ready - press Start";
+                  #ifdef USE_HOST
+                  if (!primus_sim::capture().error().empty()) return "Capture error - see terminal";
+                  #endif
+                  if (!id(_phase_str).empty()) return id(_phase_str).c_str();
+                  return "Ready - press Start";
             - lvgl.label.update:
                 id: pressure_label
                 text: !lambda |-
@@ -242,7 +262,7 @@ interval:
                 text: !lambda |-
                   float f = id(sim_flow_rate).state;
                   if (f != f) f = 0.0f;
-                  static char buf[16];
+                  static char buf[48];
                   snprintf(buf, sizeof(buf), "%.1f ml/s  %.1fg",
                            f, id(sim_shot_weight).state);
                   return buf;

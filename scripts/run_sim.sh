@@ -1,18 +1,5 @@
 #!/usr/bin/env bash
-# ---------------------------------------------------------------------------
-# Launch the openPrimus UI simulator (SDL2 window on your PC, no ESP32 needed).
-#
-# Usage:  ./scripts/run_sim.sh
-#
-# What it does:
-#   1. Checks SDL2 is installed (prints install hint if not)
-#   2. Creates a Python venv and installs ESPHome (if not already done)
-#   3. Creates firmware/secrets.yaml from the example (if missing)
-#   4. Runs `esphome run firmware/sim.yaml` → a window opens
-#
-# First run takes a couple of minutes (venv + ESPHome install + compile).
-# Later runs are fast (incremental compile, ~10s).
-# ---------------------------------------------------------------------------
+# Launch the host UI. For shot archives use scripts/kd360s_sim.py run.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,10 +22,16 @@ fi
 VENV="$ROOT/.venv"
 if [ ! -d "$VENV" ]; then
   echo ">> Creating Python venv (.venv)..."
-  python3 -m venv "$VENV"
+  PYTHON="${PYTHON:-python3.12}"
+  if ! "$PYTHON" -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
+    echo "Python 3.12+ is required. Set PYTHON to its executable path." >&2
+    exit 1
+  fi
+  "$PYTHON" -m venv "$VENV"
 fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
+python3 -c 'import sys; assert sys.version_info >= (3, 12), "Simulator requires Python 3.12+"'
 
 if ! python3 -c "import esphome" >/dev/null 2>&1; then
   echo ">> Installing ESPHome into the venv (one-time, ~1 min)..."
@@ -54,6 +47,11 @@ fi
 
 # --- 4. launch ---
 echo ">> Launching simulator... a window will open on your screen."
-echo "   (Click 'Brew' to simulate an extraction; Ctrl-C in this terminal to stop.)"
+echo "   Select a mode, then Start and Stop. Ctrl-C closes the simulator."
 echo ""
+if [ -z "${ESPHOME_BUILD_PATH:-}" ]; then
+  SIM_BUILD="$(mktemp -d "${TMPDIR:-/tmp}/openprimus-sim.XXXXXX")"
+  export ESPHOME_BUILD_PATH="$SIM_BUILD"
+  trap 'rm -rf "$SIM_BUILD"' EXIT
+fi
 esphome run firmware/sim.yaml

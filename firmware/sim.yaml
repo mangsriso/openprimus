@@ -12,6 +12,19 @@
 esphome:
   name: openprimus-sim
   friendly_name: "openPrimus (simulator)"
+  includes:
+    - ../experiments/kd360s_snapshot/protocol.h
+    - host/sim_capture.h
+
+  on_boot:
+    priority: -100
+    then:
+      - if:
+          condition:
+            lambda: return getenv("PRIMUS_SIM_SCENARIO") != nullptr;
+          then:
+            - delay: 1s
+            - script.execute: capture_demo
 
 host: {}
 logger:
@@ -28,7 +41,7 @@ display:
       height: 360      # confirm exact panel on hardware probe
     window_options:
       position:
-        centered_on_display: 1
+        centered_on_display: 0
       resizable: true
 
 # ---------------------------------------------------------------------------
@@ -51,3 +64,30 @@ packages:
   brew_page: !include packages/brew_page.yaml
   chart:     !include packages/chart.yaml
   settings:  !include packages/settings_page.yaml
+
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          primus_sim::capture().observe({id(sim_pressure).state, id(sim_flow_rate).state,
+              id(target_pressure).state, NAN, id(brew_active)}, millis());
+  - interval: 5ms
+    then:
+      - lambda: primus_sim::capture().poll(millis());
+
+script:
+  - id: capture_demo
+    then:
+      - globals.set:
+          id: current_mode
+          value: '"Classic 9 Bar"'
+      - lvgl.page.show: brew_page
+      - script.execute: brew_toggle
+      - delay: 3s
+      - script.execute: brew_toggle
+      - delay: 1s
+      - script.execute: brew_toggle
+      - delay: 4s
+      - script.execute: brew_back
+      - delay: 2s
+      - lambda: exit(0);
