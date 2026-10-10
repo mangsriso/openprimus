@@ -1,0 +1,40 @@
+{
+  "status": "offline_host_verification",
+  "hardware_verified": false,
+  "ready_to_flash": false,
+  "base_commit": "67b35dc763b5c16c978440162b54f387f03a1d7d",
+  "host_tests_passed": 81,
+  "process_test": {
+    "producer": "host C compiled against firmware protocol.h",
+    "transport": "real loopback UDP",
+    "receiver": "collector CLI child process",
+    "collector_killed_after_ack": true,
+    "restart_and_identical_replay": true,
+    "exact_raw_records": 129,
+    "sequence_ranges": [
+      [
+        0,
+        127
+      ],
+      [
+        160,
+        160
+      ]
+    ],
+    "overflow_dropped_observations": 32,
+    "jsonl_and_csv_verified": true,
+    "sqlite_integrity": "ok",
+    "mid_transaction_kill_tested": false,
+    "esp32_worker_executed": false
+  },
+  "independent_image_check": {
+    "tool": "esptool 4.8.1",
+    "command": "--chip esp32s3 image_info --version 2",
+    "stock_checksum_and_hash": "valid",
+    "snapshot_checksum_and_hash": "valid",
+    "single_byte_corruption_control": "invalid checksum and invalid hash",
+    "exit_code_alone_is_not_validation": true,
+    "reference_image_sha256": "30fca549b462afe9733114236f1152a73eb95e51fcd3f11324c8dd5f5a9b0df4"
+  },
+  "rebuild_byte_identical": true
+}

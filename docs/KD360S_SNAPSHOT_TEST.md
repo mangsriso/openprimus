@@ -21,6 +21,31 @@ conflict rejection, collector restart and CSV/JSONL exports. Its packets are
 synthetic. The C ring test separately exercises buffer overflow, stale ACKs,
 index wrap and 50,000 ordered deliveries between two host threads.
 
+## Process recovery and independent image checks
+
+The process integration test compiles a host producer against the actual
+`protocol.h`, sends its records through UDP to the collector CLI, kills the
+collector after an acknowledged record, restarts it and replays that record.
+It verifies 129 exact raw records, no duplicate rows, 32 explicitly dropped
+observations after ring overflow, both export formats and SQLite integrity.
+
+```sh
+python3 -m unittest discover -s tests -p test_kd360s_process.py -v
+```
+
+This test requires a POSIX host and C compiler. It uses loopback only and removes
+its child processes and temporary database. It tests recovery of acknowledged,
+committed data after process death. It does not kill SQLite mid-transaction or
+execute the ESP32 network worker on hardware.
+
+Independent `esptool` 4.8.1 `image_info --version 2` checks passed for both the
+pinned stock image and the reference snapshot image. A copy with one modified
+payload byte produced invalid checksum and hash results. Check the reported
+validity fields: `image_info` can return exit code zero for this corrupt control.
+The image header's flash size and secure version are declarations in the file,
+not measurements of physical flash, eFuses or partition capacity. These checks
+follow the official [image_info documentation](https://github.com/espressif/esptool/blob/v4.8.1/docs/en/esptool/basic-commands.rst#output-bin-image-details-image_info).
+
 ## Build for a specified collector
 
 Use Espressif's `esp-2021r2-patch5` Xtensa ESP32-S3 GCC 8.4.0 toolchain. The reviewed
