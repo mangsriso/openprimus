@@ -1,0 +1,44 @@
+{
+  "evidence_kind": "offline_compilation_and_disassembly_not_execution",
+  "source_firmware_sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+  "toolchain": "xtensa-esp32s3-elf-gcc 8.4.0 esp-2021r2-patch5",
+  "toolchain_archive": {
+    "host": "arm64-apple-darwin",
+    "url": "https://github.com/espressif/crosstool-NG/releases/download/esp-2021r2-patch5/xtensa-esp32s3-elf-gcc8_4_0-esp-2021r2-patch5-macos-arm64.tar.gz",
+    "archiveFileName": "xtensa-esp32s3-elf-gcc8_4_0-esp-2021r2-patch5-macos-arm64.tar.gz",
+    "checksum": "SHA-256:c64b05be25d26916c65dcfe11de9e60b96d58980b2df706d3074cb70b1ef6cb9",
+    "size": "66791095"
+  },
+  "sources": {
+    "experiments/kd360s_entry_probe/entry.c": "c38a2f11d51b9b9d292eea4d77a811ea9c70fcb77b735f7bc23fe5120b400101",
+    "experiments/kd360s_entry_probe/probe.ld": "eb78280d972d152794a6f9f4fd63c80846a36e8f34c717bbeea32da5babb7a0e"
+  },
+  "elf": {
+    "machine": 94,
+    "entry": "0x42106ea4",
+    "flags": "0x300",
+    "nonempty_allocated_sections": 1,
+    "relocation_sections": 0,
+    "static_writable_sections": 0
+  },
+  "text": {
+    "address": "0x42106ea0",
+    "size": 18,
+    "sha256": "0404ee0ac0eed761bb10c2e115a44032fc2585b7aae6ff1de51912532cae5158"
+  },
+  "independent_disassemblers": [
+    "GNU objdump supplied with esp-2021r2-patch5",
+    "Ghidra 12.1.4 Xtensa:LE:32:default"
+  ],
+  "decoded_function": [
+    "42106ea4 entry a1,0x20",
+    "42106ea7 mov a10,a2",
+    "42106eaa l32r a8,0x42106ea0",
+    "42106ead callx8 a8",
+    "42106eb0 retw.n"
+  ],
+  "original_function_literal": "0x42067014",
+  "runtime_tested": false,
+  "modified_ota_generated": false,
+  "ready_to_flash": false
+}

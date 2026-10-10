@@ -42,6 +42,14 @@ UART mapping lacks numeric actual pressure and unambiguous shot boundaries. The
 archive is useful offline but does not complete the every-shot recorder or the
 hardware validation stages below. No modified firmware has been built or flashed.
 
+The next instrumentation milestone now has a
+[runtime import map](KD360S_RUNTIME_IMPORTS.md), a compiled
+[inert task-entry probe](../experiments/kd360s_entry_probe/README.md), and a
+read-only `scripts/kd360s_instrumentation.py` audit. The probe's instructions
+were checked with GNU objdump and Ghidra. It does not produce an OTA image or
+connect Wi-Fi. Post-setup initialization, worker ownership and runtime memory
+remain to be established before the telemetry payload.
+
 ## Ordered investigation
 
 1. **Reproducible baseline (this change):** pinned download, verify and extraction;

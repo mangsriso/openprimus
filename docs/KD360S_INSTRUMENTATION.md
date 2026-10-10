@@ -2,6 +2,12 @@
 
 Status: selected investigation route; no working modified image yet.
 
+Offline progress: [runtime function matching](KD360S_RUNTIME_IMPORTS.md) now
+identifies station begin/status/disconnect and task creation. An
+[inert entry probe](../experiments/kd360s_entry_probe/README.md) compiles to
+18 bytes with the matching Xtensa toolchain. It calls the original task and
+does not connect Wi-Fi or create a modified OTA image.
+
 ## Decision and evidence
 
 Add continuous telemetry to the pinned stock application before attempting a

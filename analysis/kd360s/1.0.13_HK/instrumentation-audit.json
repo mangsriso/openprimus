@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "status": "offline_audit_passed",
+  "ready_to_flash": false,
+  "source": {
+    "value": {
+      "filename": "KD360S_OTA_1.0.13_HK_20260630.bin",
+      "sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+      "size": 3829152
+    },
+    "evidence_class": "pinned_image_verification"
+  },
+  "image_structure": {
+    "value": {
+      "segment_count": 5,
+      "code_segment": {
+        "index": 3,
+        "address": "0x42000020",
+        "file_offset": 2687008,
+        "size": 1076852,
+        "end_address_exclusive": "0x42106e94",
+        "end_file_offset_exclusive": 3763860
+      },
+      "next_segment_payload_offset": 3763868
+    },
+    "evidence_class": "verified_image_headers"
+  },
+  "witnesses": {
+    "loop_task_pointer": {
+      "value": "14700642",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x4203ec00",
+      "file_offset": 2944000,
+      "uint32_le": "0x42067014"
+    },
+    "wifi_object_literal_a": {
+      "value": "2821ca3f",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x42000790",
+      "file_offset": 2688912,
+      "uint32_le": "0x3fca2128"
+    },
+    "wifi_object_literal_b": {
+      "value": "2821ca3f",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x4203de98",
+      "file_offset": 2940568,
+      "uint32_le": "0x3fca2128"
+    },
+    "bss_start_literal": {
+      "value": "90c8c93f",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x403746d4",
+      "file_offset": 2677820,
+      "uint32_le": "0x3fc9c890"
+    },
+    "bss_end_literal": {
+      "value": "7893ca3f",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x403746d0",
+      "file_offset": 2677816,
+      "uint32_le": "0x3fca9378"
+    },
+    "loop_task_entry_bytes": {
+      "value": "36410010112025e4a4",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x42067014",
+      "file_offset": 3108884
+    },
+    "task_pointer_load_bytes": {
+      "value": "a1e65e",
+      "evidence_class": "verified_image_bytes",
+      "address": "0x42067065",
+      "file_offset": 3108965
+    }
+  },
+  "task_pointer_interpretation": {
+    "value": "Ghidra static analysis identifies the literal loaded at 0x42067065 as the loopTask pointer passed during task creation. The literal at 0x4203ec00 contains 0x42067014.",
+    "evidence_class": "external_static_ghidra_analysis",
+    "independently_decoded_by_this_tool": false
+  },
+  "candidate_placement": {
+    "value": {
+      "alignment": 16,
+      "proposed_start_address": "0x42106ea0",
+      "prospective_file_offset": 3763872,
+      "assumed_page_size": 65536,
+      "page_end_address_exclusive": "0x42110000",
+      "bytes_until_assumed_page_end": 37216,
+      "overlaps_existing_segment_payload": true,
+      "requires_insertion_and_shift": true,
+      "runtime_mmu_mapping_proven": false
+    },
+    "evidence_class": "layout_arithmetic_only",
+    "limitation": "The page remainder is arithmetic, not verified free executable memory. Writing the probe at the prospective file offset would overwrite segment 4. No bytes are inserted, shifted, or overwritten by this tool."
+  },
+  "probe_text": {
+    "value": {
+      "size": 18,
+      "sha256": "0404ee0ac0eed761bb10c2e115a44032fc2585b7aae6ff1de51912532cae5158",
+      "entry_offset": 4,
+      "proposed_entry": "0x42106ea4",
+      "additional_stack_frame_bytes": 32,
+      "general_elf_validation": false,
+      "runtime_tested": false
+    },
+    "evidence_class": "exact_prototype_bytes",
+    "interpretation": "The fixed prototype forwards its argument through a windowed call to the old loopTask. It adds no telemetry. Matching raw text does not validate an ELF, its relocations, runtime ABI behavior, or available task stack."
+  },
+  "blockers": [
+    "Device bootloader, partition table, eFuse security state, and recovery are unverified.",
+    "Actual OTA slot capacity and bootloader MMU mapping are unverified.",
+    "Probe runtime ABI behavior and loopTask stack headroom are unverified.",
+    "No persistent Wi-Fi worker, reconnect logic, telemetry, or shot archive exists in this probe."
+  ]
+}
