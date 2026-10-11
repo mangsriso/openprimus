@@ -17,7 +17,7 @@ from kd360s_test_image import build_image, write_package
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(toolchain, stock, collector, port, output):
+def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=False):
     address = ipaddress.IPv4Address(collector)
     if address.is_multicast or address.is_unspecified or address == ipaddress.IPv4Address('255.255.255.255'):
         raise ValueError('collector must be an explicit unicast IPv4 address')
@@ -40,7 +40,7 @@ def build(toolchain, stock, collector, port, output):
         subprocess.run(command, check=True, cwd=temporary)
         with stock.open('rb') as stream:
             original = stream.read(TARGET.size + 1)
-        binary, manifest = build_image(original, elf.read_bytes())
+        binary, manifest = build_image(original, elf.read_bytes(), trial_defer_confirm=trial_defer_confirm)
         manifest['experiment'] = {
             'name': 'normal_screen_snapshot_v1', 'collector_ipv4': str(address), 'collector_port': port,
             'compiler': version, 'protocol': 'WPS1', 'observation_interval_min_ms': 100,
@@ -60,9 +60,12 @@ def main(argv=None):
     parser.add_argument('--collector-ip', required=True)
     parser.add_argument('--port', type=int, default=47653)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--trial-defer-confirm', action='store_true',
+                        help='offline trial that suppresses early stock OTA confirmation; rollback is not guaranteed')
     args = parser.parse_args(argv)
     try:
-        result = build(args.toolchain, args.stock, args.collector_ip, args.port, args.output)
+        result = build(args.toolchain, args.stock, args.collector_ip, args.port, args.output,
+                       trial_defer_confirm=args.trial_defer_confirm)
     except (ValueError, OSError, FirmwareError, subprocess.CalledProcessError) as error:
         print(json.dumps({'status': 'build_rejected', 'ready_to_flash': False, 'error': str(error)}))
         return 1

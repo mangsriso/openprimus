@@ -1,7 +1,11 @@
 # KD360S stock-firmware instrumentation plan
 
-Status: an [experimental snapshot package](KD360S_SNAPSHOT_TEST.md) now builds
-and passes host tests. Modified-image boot and machine behavior are untested.
+Status: an [experimental snapshot package](KD360S_SNAPSHOT_TEST.md) builds and
+passes host tests, including execution of its C control flow with mocked stock
+calls. [Boot and updater analysis](KD360S_BOOT_AND_UPDATE.md) identifies the
+local upload path and stock early-confirmation behavior. Follow the
+[deployment preparation](KD360S_DEPLOYMENT_PREPARATION.md) before a hardware trial.
+Modified-image boot and machine behavior are untested.
 
 Offline progress: [runtime function matching](KD360S_RUNTIME_IMPORTS.md) now
 identifies station begin/status/disconnect and task creation. An
@@ -75,9 +79,9 @@ Boolean because diagnostic logic can overwrite it.
 ## Establish the connection path first
 
 The updater at `4201d334` contains candidate event registration `42056034`,
-station connection `420561c0` and status `420561a0`. These identities are inferred
-from call context; recover their arguments, object ownership and initialization
-requirements before calling them from injected code.
+station connection `420561c0` and status `420561a0`. The [runtime import evidence](KD360S_RUNTIME_IMPORTS.md) now correlates these
+functions and arguments with the stock SDK. Device execution and cross-task
+network ownership remain unverified.
 
 The stock main loop already calls this routine, with flags controlling its
 branches. Activating its connection/update branch during brewing can block

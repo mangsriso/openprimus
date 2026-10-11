@@ -7,7 +7,10 @@
 > An [inert entry probe](experiments/kd360s_entry_probe/README.md) and read-only
 > instrumentation audit establish a candidate integration boundary.
 > An [experimental snapshot image builder and UDP collector](docs/KD360S_SNAPSHOT_TEST.md)
-> now pass offline tests. No modified image has been tested on the machine.
+> now pass offline tests. See [boot/update evidence](docs/KD360S_BOOT_AND_UPDATE.md)
+> and [firmware trial preparation](docs/KD360S_DEPLOYMENT_PREPARATION.md) for the
+> local upload path, early OTA confirmation, and unresolved recovery checks.
+> No modified image has been tested on the machine.
 > There is no validated live Slim shot recorder or replacement firmware yet.
 > The upstream documentation below describes **KD360X**. Its addresses, pins,
 > NVS interpretations and security claims are not evidence for KD360S.

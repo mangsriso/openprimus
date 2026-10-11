@@ -48,8 +48,11 @@ The next instrumentation milestone now has a
 [inert task-entry probe](../experiments/kd360s_entry_probe/README.md), and a
 read-only `scripts/kd360s_instrumentation.py` audit. The probe's instructions
 were checked with GNU objdump and Ghidra. It does not produce an OTA image or
-connect Wi-Fi. Post-setup initialization, worker ownership and runtime memory
-remain to be established before the telemetry payload.
+connect Wi-Fi. The snapshot payload now includes post-setup initialization and an owned
+heap context. Host tests execute its actual C control flow with SDK stubs.
+Cross-task network ownership and device memory headroom remain unverified.
+[Boot and updater evidence](KD360S_BOOT_AND_UPDATE.md) and
+[deployment preparation](KD360S_DEPLOYMENT_PREPARATION.md) cover the next trial.
 
 ## Ordered investigation
 

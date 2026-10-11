@@ -1,0 +1,139 @@
+{
+  "image_sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+  "ota_page": {
+    "gzip_address": "0x3c367086",
+    "gzip_bytes": 11609,
+    "decoded_bytes": 46600,
+    "decoded_sha256": "480b0432ab039ece0e8d3b84bb7323a6668a36f37743b8081def4ed9b21a393d",
+    "start_request": "GET /ota/start?mode=${f}&hash=${s}",
+    "upload_request": "POST /ota/upload",
+    "multipart_field": "file",
+    "firmware_mode": "fr",
+    "filesystem_mode": "fs"
+  },
+  "rollback": {
+    "initArduino": "0x420661f8",
+    "app_main": "0x42067040",
+    "verifyOta": "0x42100f68",
+    "verifyOta_returns": 1,
+    "verifyRollbackLater": "0x42100f70",
+    "verifyRollbackLater_returns": 0,
+    "mark_valid": "0x4206efcc",
+    "bootloader_device_not_known": true
+  },
+  "evidence_kind": "pinned_binary_static_analysis_and_source_correlation",
+  "hardware_tested": false,
+  "ready_to_flash": false,
+  "mapping": {
+    "source_sha256": "ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4",
+    "evidence_class": "static_binary_and_sdk_source_correlation_not_execution",
+    "startup_call_address": "0x4037787b",
+    "literals": {
+      "mask": {
+        "literal_address": "0x403744d0",
+        "file_offset": 2677304,
+        "value": "0xffff0000"
+      },
+      "rodata_start": {
+        "literal_address": "0x403746e0",
+        "file_offset": 2677832,
+        "value": "0x3c110020"
+      },
+      "rodata_end": {
+        "literal_address": "0x403746e8",
+        "file_offset": 2677840,
+        "value": "0x3c39765c"
+      },
+      "negative_drom_base": {
+        "literal_address": "0x403746e4",
+        "file_offset": 2677836,
+        "value": "0xc4000000"
+      },
+      "page_roundup": {
+        "literal_address": "0x4037454c",
+        "file_offset": 2677428,
+        "value": "0xffff"
+      },
+      "cache_set_idrom_mmu_size": {
+        "literal_address": "0x40374720",
+        "file_offset": 2677896,
+        "value": "0x40001914"
+      }
+    },
+    "instruction_mmu_entries": 17,
+    "instruction_mmu_table_bytes": 68,
+    "data_mmu_table_bytes": 956,
+    "stock_irom_pages": 17,
+    "irom_virtual_limit_exclusive": "0x42110000",
+    "payload_start": "0x42106ea0",
+    "payload_capacity_bytes": 37216,
+    "mapping_runtime_verified": false,
+    "sources": [
+      "https://github.com/espressif/esp-idf/blob/v4.4.6/components/esp_system/port/cpu_start.c#L363-L375",
+      "https://github.com/espressif/esp-idf/blob/v4.4.6/components/bootloader_support/src/bootloader_utility.c#L614-L653",
+      "https://github.com/espressif/esp-idf/blob/v4.4.6/components/esp_rom/esp32s3/ld/esp32s3.rom.ld#L415"
+    ]
+  },
+  "references": [
+    {
+      "target": "0x42100f70",
+      "word_occurrences": [
+        {
+          "segment": 3,
+          "address": "0x4203eafc",
+          "aligned": true
+        }
+      ],
+      "possible_direct_calls": [],
+      "possible_literal_loads": []
+    },
+    {
+      "target": "0x4203eafc",
+      "word_occurrences": [],
+      "possible_direct_calls": [],
+      "possible_literal_loads": [
+        "0x420661fb"
+      ]
+    }
+  ],
+  "offline_trial_builds": {
+    "images": [
+      {
+        "name": "entry-probe-trial",
+        "sha256": "cb7eae2568a6dc8137128f551b3f2515974d7773436af1c08494070189aaf2bd",
+        "size": 3829184,
+        "sector_rounded_size": "0x3a7000",
+        "instruction_delta_offsets": [
+          "0x390f74"
+        ],
+        "source_restored_byte_identically": true,
+        "esptool_version": "5.3.0",
+        "checksum_and_hash_valid": true,
+        "boot_tested": false,
+        "rollback_verified_on_device": false,
+        "ready_to_flash": false
+      },
+      {
+        "name": "snapshot-reference-trial",
+        "sha256": "d514b869ce31f5c17323a6d035e6dbc5ddd9931d3eabf385732f917d71f335ab",
+        "size": 3830512,
+        "sector_rounded_size": "0x3a8000",
+        "instruction_delta_offsets": [
+          "0x390f74"
+        ],
+        "source_restored_byte_identically": true,
+        "esptool_version": "5.3.0",
+        "checksum_and_hash_valid": true,
+        "boot_tested": false,
+        "rollback_verified_on_device": false,
+        "ready_to_flash": false
+      }
+    ],
+    "negative_control_detected": true
+  },
+  "host_tests": {
+    "suite_count": 114,
+    "result": "passed_without_skips",
+    "sdk_and_machine_not_executed": true
+  }
+}

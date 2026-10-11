@@ -1,8 +1,9 @@
 # Inert KD360S task-entry probe
 
 This experiment compiles a standalone Xtensa function that calls the stock
-`loopTask`. It does not generate an OTA image, connect to a device, export data,
-or establish that a modified application can boot. It runs before stock `setup`
+`loopTask`. The compile step produces an ELF. The packaging step below creates
+a local experimental application image. Neither step contacts a device or
+establishes that the modified application can boot. The probe exports no data. It runs before stock `setup`
 if a future image redirects the task entry to it. Code placed after the call
 would not run during normal operation because `loopTask` does not return.
 
@@ -62,11 +63,29 @@ payload or overwrite the stock instructions underneath it.
 
 The proposed section is beyond the current IROM segment's end. At its projected
 file offset, `0x396ea0`, the original file already contains part of the final
-IRAM segment. A future image builder would have to extend IROM by inserting
-bytes, move the following segment header and payload, and regenerate integrity
-fields. Writing the probe over the existing file offset would corrupt it.
+IRAM segment. The offline image builder extends IROM by inserting bytes, moves the following
+segment header and payload, and regenerates integrity fields. Writing the probe over the existing file offset would corrupt it.
 
 The proposed start has 37,216 bytes before the next 64 KiB boundary. This is
 address arithmetic, not a free-space or runtime MMU guarantee. The device's
 partition capacity, bootloader acceptance and recovery path remain unknown.
 The audit always reports `ready_to_flash: false`.
+
+## Package an offline image
+
+After compiling the ELF above, package it locally:
+
+```sh
+python3 scripts/kd360s_test_image.py \
+  --elf analysis/extracted/entry-probe/probe.elf \
+  --trial-defer-confirm \
+  --output private/entry-probe-trial
+```
+
+The opt-in trial flag suppresses stock early OTA confirmation. It adds no later
+confirmation and does not prove bootloader rollback. Without the flag, the
+package retains stock confirmation behavior. Both variants remain experimental
+and report `ready_to_flash: false`. Read the
+[boot evidence](../../docs/KD360S_BOOT_AND_UPDATE.md) and
+[preparation procedure](../../docs/KD360S_DEPLOYMENT_PREPARATION.md) before
+planning any hardware test.

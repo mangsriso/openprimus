@@ -1,5 +1,6 @@
 """Builder fixtures are synthetic; the optional pinned-image smoke uses a local cache."""
 
+from dataclasses import replace
 import hashlib
 import io
 import json
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import kd360s_firmware as firmware
 import kd360s_instrumentation as audit
 import kd360s_test_image as builder
+import kd360s_build_snapshot as snapshot
 from test_kd360s_instrumentation import synthetic_layout
 
 
@@ -158,17 +160,20 @@ class ImageTests(unittest.TestCase):
     def setUpClass(cls):
         layout = synthetic_layout()
         body = bytearray(layout.data[:layout.payload_end])
+        body[0x390F70:0x390F78] = bytes.fromhex("3641000c021df000")
         body[0] = 0xE9
         body[23] = 1
         struct.pack_into("<H", body, 12, 9)
         cls.stock = builder._seal(bytes(body))
         cls.target = firmware.Target(firmware.TARGET.filename, len(cls.stock), hashlib.sha256(cls.stock).hexdigest(), 9, 5)
 
-    def synthetic_build(self, elf=None):
+    def synthetic_build(self, elf=None, *, stock=None, **kwargs):
+        stock = self.stock if stock is None else stock
+        source_target = firmware.Target("synthetic", len(stock), hashlib.sha256(stock).hexdigest(), 9, 5)
         def verify(data, target=None):
-            return firmware.verify_bytes(data, self.target if target is None else target)
+            return firmware.verify_bytes(data, source_target if target is None else target)
         with patch.object(builder, "verify_bytes", side_effect=verify), patch.object(builder, "audit_bytes", return_value={"status": "synthetic_audit"}):
-            return builder.build_image(self.stock, elf_fixture() if elf is None else elf)
+            return builder.build_image(stock, elf_fixture() if elf is None else elf, **kwargs)
 
     def test_patch_inserts_bytes_and_preserves_each_other_original_byte(self):
         result, manifest = self.synthetic_build()
@@ -202,6 +207,126 @@ class ImageTests(unittest.TestCase):
 
     def test_repeated_build_is_byte_identical(self):
         self.assertEqual(self.synthetic_build(), self.synthetic_build())
+
+    def test_trial_default_false_preserves_binary_and_manifest(self):
+        default = self.synthetic_build()
+        self.assertEqual(default, self.synthetic_build(trial_defer_confirm=False))
+        self.assertNotIn("trial_defer_confirm", default[1]["changes"])
+
+    def test_trial_changes_only_instruction_checksum_and_digest(self):
+        default, _ = self.synthetic_build()
+        trial, manifest = self.synthetic_build(trial_defer_confirm=True)
+        self.assertEqual(len(default), len(trial))
+        checksum = manifest["changes"]["checksum"]["offset_after"]
+        self.assertEqual(trial[:0x390F74], default[:0x390F74])
+        self.assertEqual((default[0x390F74], trial[0x390F74]), (0x02, 0x12))
+        self.assertEqual(trial[0x390F75:checksum], default[0x390F75:checksum])
+        self.assertEqual(default[checksum] ^ trial[checksum], 0x10)
+        self.assertEqual(hashlib.sha256(trial[:checksum + 1]).digest(), trial[checksum + 1:])
+        change = manifest["changes"]["trial_defer_confirm"]
+        self.assertEqual(change["expected_function_hex"], "3641000c021df000")
+        self.assertEqual(change["function_address"], "0x42100f70")
+        self.assertEqual(change["file_offset"], 0x390F74)
+        self.assertFalse(change["mark_valid_added"])
+        self.assertFalse(change["rollback_verified_on_device"])
+        self.assertFalse(manifest["ready_to_flash"])
+        self.assertTrue(manifest["checks"]["reverse_to_pinned_stock"])
+        old = firmware.verify_bytes(self.stock, self.target)
+        insertion = manifest["changes"]["insertion"]
+        restored = bytearray(trial[:insertion["file_offset"]] + trial[insertion["file_offset"] + insertion["size"]:])
+        struct.pack_into("<I", restored, old.segments[3].offset - 4, old.segments[3].size)
+        restored[0x2CEC00:0x2CEC04] = bytes.fromhex("14700642")
+        restored[0x390F74] = 0x02
+        self.assertEqual(builder._seal(bytes(restored[:old.payload_end])), self.stock)
+
+    def test_trial_checks_every_function_byte_including_already_patched_input(self):
+        old = firmware.verify_bytes(self.stock, self.target)
+        for offset in range(8):
+            body = bytearray(self.stock[:old.payload_end])
+            body[0x390F70 + offset] ^= 0x10
+            wrong = builder._seal(bytes(body))
+            with self.subTest(offset=offset), self.assertRaisesRegex(firmware.FirmwareError, "function bytes"):
+                self.synthetic_build(stock=wrong, trial_defer_confirm=True)
+
+    def test_trial_rejects_unexpected_file_mapping_and_non_irom_range(self):
+        original = firmware.verify_bytes(self.stock, self.target)
+        code = original.segments[3]
+        cases = [replace(code, offset=code.offset + 4),
+                 replace(code, address=0x3C000020),
+                 replace(code, size=0x42100F74 - code.address)]
+        images = [replace(original, segments=original.segments[:3] + (changed,) + original.segments[4:])
+                  for changed in cases]
+        images.append(replace(original, segments=original.segments + (replace(code, index=5),)))
+        for image in images:
+            with self.subTest(segments=image.segments), patch.object(builder, "audit_bytes", return_value={}), \
+                    patch.object(builder, "verify_bytes", return_value=image), \
+                    self.assertRaises(firmware.FirmwareError):
+                builder.build_image(self.stock, elf_fixture(), trial_defer_confirm=True)
+
+    def test_trial_keeps_stock_pin_before_interpretation(self):
+        with patch.object(builder, "parse_elf") as parse, self.assertRaises(firmware.FirmwareError):
+            builder.build_image(self.stock, elf_fixture(), trial_defer_confirm=True)
+        parse.assert_not_called()
+
+    def test_trial_reverse_verification_detects_an_extra_validly_sealed_edit(self):
+        seal = builder._seal
+        def extra_edit(body):
+            changed = bytearray(body)
+            changed[0x390F75] ^= 1
+            return seal(bytes(changed))
+        with patch.object(builder, "_seal", side_effect=extra_edit), self.assertRaises(firmware.FirmwareError):
+            self.synthetic_build(trial_defer_confirm=True)
+
+    def test_trial_and_default_packages_cannot_overwrite_each_other(self):
+        default = self.synthetic_build()
+        trial = self.synthetic_build(trial_defer_confirm=True)
+        for first, second in ((default, trial), (trial, default)):
+            with self.subTest(trial_first=first == trial), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "package"
+                builder.write_package(output, *first)
+                builder.write_package(output, *first)
+                with self.assertRaises(firmware.FirmwareError):
+                    builder.write_package(output, *second)
+                self.assertEqual((output / "firmware.experimental.bin").read_bytes(), first[0])
+                self.assertEqual(json.loads((output / "manifest.json").read_text()), first[1])
+
+    def test_both_clis_forward_trial_option_and_default(self):
+        for enabled in (False, True):
+            flag = ["--trial-defer-confirm"] if enabled else []
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                stock, elf = root / "stock", root / "payload"
+                stock.write_bytes(b"stock")
+                elf.write_bytes(b"elf")
+                manifest = {"status": "test", "output": {"sha256": "test"}}
+                with patch.object(builder, "build_image", return_value=(b"image", manifest)) as build, \
+                        patch.object(builder, "write_package"), patch("sys.stdout", io.StringIO()):
+                    self.assertEqual(builder.main(["--stock", str(stock), "--elf", str(elf),
+                                                   "--output", str(root / "result")] + flag), 0)
+                build.assert_called_once_with(b"stock", b"elf", trial_defer_confirm=enabled)
+                with patch.object(snapshot, "build", return_value=manifest) as build, patch("sys.stdout", io.StringIO()):
+                    self.assertEqual(snapshot.main(["--stock", str(stock), "--toolchain", str(root),
+                                                    "--collector-ip", "192.0.2.1", "--output", str(root / "result")] + flag), 0)
+                self.assertEqual(build.call_args.kwargs, {"trial_defer_confirm": enabled})
+
+    def test_snapshot_wrapper_forwards_trial_and_keeps_experiment_metadata(self):
+        def compile_fixture(command, **kwargs):
+            Path(command[command.index("-o") + 1]).write_bytes(elf_fixture())
+        manifest = {"status": "test", "changes": {"trial_defer_confirm": {"mark_valid_added": False}}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stock = root / "stock.bin"
+            stock.write_bytes(b"stock")
+            with patch.object(snapshot.subprocess, "check_output", return_value="gcc 8.4.0 esp-2021r2-patch5"), \
+                    patch.object(snapshot.subprocess, "run", side_effect=compile_fixture), \
+                    patch.object(snapshot, "build_image", return_value=(b"image", manifest)) as build, \
+                    patch.object(snapshot, "write_package") as publish:
+                result = snapshot.build(root, stock, "192.0.2.1", 47653, root / "out", trial_defer_confirm=True)
+            build.assert_called_once_with(b"stock", elf_fixture(), trial_defer_confirm=True)
+            self.assertEqual(result["experiment"]["protocol"], "WPS1")
+            self.assertEqual(result["experiment"]["collector_ipv4"], "192.0.2.1")
+            self.assertFalse(result["changes"]["trial_defer_confirm"]["mark_valid_added"])
+            publish.assert_called_once_with(root / "out", b"image", result)
 
     def test_output_publication_is_idempotent_and_does_not_overwrite(self):
         binary, manifest = self.synthetic_build()
@@ -276,6 +401,10 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(stock).hexdigest(), firmware.TARGET.sha256)
         self.assertEqual(hashlib.sha256(result).hexdigest(), manifest["output"]["sha256"])
         self.assertTrue(manifest["checks"]["reverse_to_pinned_stock"])
+        trial, trial_manifest = builder.build_image(stock, elf_fixture(), trial_defer_confirm=True)
+        self.assertEqual((stock[0x390F74], trial[0x390F74]), (0x02, 0x12))
+        self.assertTrue(trial_manifest["checks"]["reverse_to_pinned_stock"])
+        self.assertEqual((result, manifest), builder.build_image(stock, elf_fixture(), trial_defer_confirm=False))
 
 
 if __name__ == "__main__":

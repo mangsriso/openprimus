@@ -85,6 +85,12 @@ python3 scripts/kd360s_build_snapshot.py \
   --output private/snapshot-test
 ```
 
+For a conditional one-boot trial, add `--trial-defer-confirm`. This suppresses
+the stock early OTA confirmation and adds no later confirmation. It does not
+establish rollback on the device. Read the [boot evidence](KD360S_BOOT_AND_UPDATE.md)
+and [preparation procedure](KD360S_DEPLOYMENT_PREPARATION.md) before choosing a
+hardware experiment.
+
 The destination must be the collector's IPv4 address, not the espresso machine's
 address. No network contact occurs during this build. The output contains
 `firmware.experimental.bin` and `manifest.json`. The manifest records the exact

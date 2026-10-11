@@ -19,6 +19,10 @@ from kd360s_instrumentation import EXPECTED_SEGMENTS, audit_bytes, mapped_bytes
 PAYLOAD_START = 0x42106EA0
 PAYLOAD_LIMIT = 0x42110000
 TASK_POINTER = 0x4203EC00
+_TRIAL_FUNCTION = 0x42100F70
+_TRIAL_EXPECTED = bytes.fromhex("3641000c021df000")
+_TRIAL_BYTE_OFFSET = 0x390F74
+_TRIAL_REPLACEMENT = 0x12
 MAX_ELF_SIZE = 16 * 1024 * 1024
 ELF_HEADER = struct.Struct("<16sHHIIIIIHHHHHH")
 SECTION_HEADER = struct.Struct("<IIIIIIIIII")
@@ -183,13 +187,22 @@ def _seal(body: bytes) -> bytes:
     return sealed + hashlib.sha256(sealed).digest()
 
 
-def build_image(stock: bytes, elf: bytes) -> tuple[bytes, dict]:
+def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) -> tuple[bytes, dict]:
     """Build only from the exact stock pin, then undo the edits and verify that pin."""
     source_audit = audit_bytes(stock)
     image = verify_bytes(stock)
     payload = parse_elf(elf)
     code = image.segments[3]
     insertion_offset = code.offset + code.size
+    if trial_defer_confirm:
+        function_offset, function_bytes = mapped_bytes(image, _TRIAL_FUNCTION, len(_TRIAL_EXPECTED))
+        if not (0x42000000 <= code.address <= _TRIAL_FUNCTION
+                and _TRIAL_FUNCTION + len(_TRIAL_EXPECTED) <= code.address + code.size <= 0x44000000):
+            raise FirmwareError("trial confirmation function must lie wholly in the IROM code segment")
+        if function_offset + 4 != _TRIAL_BYTE_OFFSET or function_offset + len(_TRIAL_EXPECTED) > insertion_offset:
+            raise FirmwareError("trial confirmation function has an unexpected file offset")
+        if function_bytes != _TRIAL_EXPECTED:
+            raise FirmwareError("trial confirmation function bytes differ from the stock witness")
     padding = PAYLOAD_START - (code.address + code.size)
     inserted = bytes(padding) + payload.data
     # ESP segment lengths are word-aligned, including a payload whose last opcode is short.
@@ -200,6 +213,8 @@ def build_image(stock: bytes, elf: bytes) -> tuple[bytes, dict]:
     body = bytearray(stock[:insertion_offset] + inserted + stock[insertion_offset:image.payload_end])
     struct.pack_into("<I", body, code.offset - 4, code.size + len(inserted))
     struct.pack_into("<I", body, pointer_offset, payload.entry)
+    if trial_defer_confirm:
+        body[_TRIAL_BYTE_OFFSET] = _TRIAL_REPLACEMENT
     result = _seal(bytes(body))
     result_target = Target("firmware.experimental.bin", len(result), hashlib.sha256(result).hexdigest(), 9, 5)
     rebuilt = verify_bytes(result, result_target)
@@ -212,6 +227,8 @@ def build_image(stock: bytes, elf: bytes) -> tuple[bytes, dict]:
     restored = bytearray(result[:insertion_offset] + result[insertion_offset + len(inserted):rebuilt.payload_end])
     struct.pack_into("<I", restored, code.offset - 4, code.size)
     restored[pointer_offset:pointer_offset + 4] = old_pointer
+    if trial_defer_confirm:
+        restored[_TRIAL_BYTE_OFFSET] = _TRIAL_EXPECTED[4]
     # Preserve the original checksum padding too, so the comparison covers every stock byte.
     restored.extend(stock[image.payload_end:])
     verify_bytes(bytes(restored))
@@ -246,6 +263,19 @@ def build_image(stock: bytes, elf: bytes) -> tuple[bytes, dict]:
                    "reverse_to_pinned_stock": True, "payload_runtime_tested": False},
         "unresolved_hardware_gates": HARDWARE_GATES,
     }
+    if trial_defer_confirm:
+        manifest["changes"]["trial_defer_confirm"] = {
+            "function_address": f"0x{_TRIAL_FUNCTION:08x}",
+            "byte_address": f"0x{_TRIAL_FUNCTION + 4:08x}",
+            "file_offset": _TRIAL_BYTE_OFFSET,
+            "before_hex": _TRIAL_EXPECTED[4:5].hex(),
+            "after_hex": bytes([_TRIAL_REPLACEMENT]).hex(),
+            "expected_function_hex": _TRIAL_EXPECTED.hex(),
+            "intent": "defer_stock_early_ota_confirmation",
+            "mark_valid_added": False,
+            "rollback_verified_on_device": False,
+            "rollback_condition": "Rollback depends on the device bootloader configuration and OTA slot state.",
+        }
     return result, manifest
 
 
@@ -300,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stock", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--elf", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="new local package directory")
+    parser.add_argument("--trial-defer-confirm", action="store_true",
+                        help="offline trial that suppresses early stock OTA confirmation; rollback is not guaranteed")
     args = parser.parse_args(argv)
     try:
         if args.output.resolve() in (args.stock.resolve(), args.elf.resolve()):
@@ -308,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
             stock = source.read(TARGET.size + 1)
         with args.elf.open("rb") as source:
             elf = source.read(MAX_ELF_SIZE + 1)
-        binary, manifest = build_image(stock, elf)
+        binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm)
         write_package(args.output, binary, manifest)
         print(json.dumps({"status": manifest["status"], "ready_to_flash": False,
                           "output": str(args.output), "sha256": manifest["output"]["sha256"]}, indent=2))
