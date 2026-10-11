@@ -1,9 +1,10 @@
-# Experimental KD360S snapshot test package
+# Experimental KD360S recorder test package
 
 This package builds a modified image and provides a working host collector. It has
 passed offline image checks and host transport tests. It has **not booted on a
-KD360S**. It does not yet provide complete shot boundaries or prove sensor
-freshness. The owner's available access is Wi-Fi and the stock application's DFU
+KD360S**. WPS2 adds explicit start/stop, pressure-calibration and accepted-RX
+hooks. These record source invocations, not proof of physical sensor freshness.
+The owner's available access is Wi-Fi and the stock application's DFU
 screen; neither establishes recovery if the application fails to boot.
 
 ## Run the host test now
@@ -27,23 +28,36 @@ index wrap and 50,000 ordered deliveries between two host threads.
 python3 -m unittest discover -s tests -p test_kd360s_runtime.py -v
 ```
 
-These seven tests compile the actual `snapshot.c` with deterministic replacements
+These eight tests compile the actual `snapshot.c` with deterministic replacements
 for stock memory reads and SDK calls. They exercise credential copying, failure
 fallback to the stock loop, call order, 100 ms observation spacing, raw fields,
 clock wrap, socket recovery, ACK validation and the 250 ms retry interval.
 The driver stops infinite loops after a fixed number of iterations.
 
+The lifecycle test also covers repeated sensor values, rapid start/stop/start,
+diagnostic fields, missing context, clock wrap, source counter saturation, and
+queue overflow. `test_kd360s_recorder.py` sends the production C records through
+real loopback UDP into SQLite and checks replay, reopening, mixed WPS1/WPS2
+exports and transactional archive migration.
+
 The tests preserve an existing limitation. If the initial `WiFi.begin` fails and
 the SDK never reports a connection, the worker does not call `begin` again.
-It marks capture ready and retains records in RAM until the ring fills. The tests
+The main task marks capture ready after context binding and task creation, before
+waiting for a network connection, and retains records until the ring fills. The tests
 also verify that a simulated SDK reconnection allows the same pending record to
 be sent again. They do not establish that the real stock SDK reconnects.
 
 `stock_runtime.h` holds the fixed-address imports, memory access and Xtensa ABI
 requirements. The host driver substitutes that boundary and includes the same
 payload source and `protocol.h`. No host test executes those import addresses,
-the Xtensa instructions, SDK scheduling, physical networking or machine control.
+SDK scheduling, physical networking or machine control.
 The native test result does not satisfy the hardware gates below.
+
+The [QEMU verification](../experiments/kd360s_snapshot/verification/README.md)
+executes the production Xtensa adapters separately. Thirteen cases cover pressure,
+RX, stop and the start prefix, including register-window spills and a negative
+control. Start's full body, SDK scheduling and packaged-image boot are outside
+that emulator test.
 
 ## Process recovery and independent image checks
 
@@ -99,7 +113,8 @@ unresolved hardware checks. It always reports `ready_to_flash: false`.
 Use the [offline preflight](KD360S_PREFLIGHT.md) to verify these files together.
 
 The builder inserts code into segment 3, shifts segment 4 without changing its
-payload, and changes the loop-task entry pointer. It regenerates ESP checksum and
+payload, changes the loop-task entry pointer, and adds four byte-guarded function
+entry detours. It regenerates ESP checksum and
 SHA-256, then reverses those changes and requires a byte-identical stock image.
 It rejects the wrong input version, unresolved ELF symbols, writable static
 sections and payloads outside the candidate tail. Those checks do not establish
@@ -113,10 +128,13 @@ with the real collector address before considering a hardware experiment.
 
 ## What the payload attempts
 
-After stock setup, it allocates an 8,320-byte context and creates a worker with a
+After stock setup, it allocates a context containing a 16,384-byte record array,
+ring/state metadata and credential copies, and creates a worker with a
 4,096-byte requested stack. SDK task metadata and networking consume additional
-memory. Allocation or task-creation failure disables capture and continues the
-stock loop. Heap and stack headroom on the physical machine remain unknown.
+memory. A genuine pthread key binds that context only to the loop task. Allocation,
+binding or task-creation failure disables capture and continues the stock loop.
+A published or uncertain context remains allocated until reboot to avoid dangling
+pointers. Heap and stack headroom on the physical machine remain unknown.
 
 The worker calls the recovered stock `WiFi.begin` once with copies of the saved
 credentials. It erases its password copy after that call. It does not register the
@@ -126,20 +144,24 @@ concurrent access to those screens is outside this first experiment.
 
 The loop wrapper preserves setup, conditional watchdog reset, stock loop and
 serial-event calls. It polls raw values after an iteration, with a minimum 100 ms
-between observations. This is at most 10 observations per second, not a producer
-sample-rate guarantee. Each record includes actual/target pressure and flow bits,
+between observations. Additional records come from start/stop and source hooks
+during a shot. Each record includes actual/target pressure and flow bits,
 raw volume, mode/state/active/stop/diagnostic fields, observation time and coarse
 loop duration. Units need physical confirmation. Millisecond loop duration is
 not a worst-case latency measurement. Snapshot collection and timer calls add
-work to the control task and still require timing validation.
+work to the control task and still require timing validation. WPS2 also preserves
+the calibrated pressure return before the caller's clamp, ADC argument, source
+generations/timestamps, and the 28-byte accepted receive window. The pressure
+event's common control fields may still contain the preceding update.
 
 The 128-record RAM ring retains unacknowledged records and drops new observations
 when full. It reports cumulative drops and sequence gaps once records resume.
-At 10 observations per second, an initially empty ring represents about 12.8
-seconds of observations. Records disappear on power loss. A full ring at the end
+Retention is 128 divided by the actual total event rate in records/second;
+source events shorten it compared with the old polling-only experiment.
+Records disappear on power loss. A full ring at the end
 of a session may lose observations before it can report the final drop count.
 The sender stops accepting records before its 32-bit sequence wraps. The session
-nonce comes from the recovered SDK random generator after Wi-Fi initialization.
+nonce comes from the recovered SDK random generator after stock setup.
 
 The collector acknowledges only after SQLite commit. The worker accepts only a
 matching ACK from its configured destination, then frees the slot. UDP retries
@@ -165,8 +187,9 @@ Once those prerequisites are established:
    and overflow behavior. Do not enter Wi-Fi/OTA/DFU screens during this experiment.
 4. Validate heap/stack headroom and control-task timing before a supervised brew.
 5. Compare values and transitions against the display and independently observed
-   shots, including aborts and diagnostics. Polling alone may miss transitions.
+   shots, including aborts and diagnostics. Explicit hooks still need on-device
+   coverage and control-task timing verification.
 
-Complete every-shot capture still needs producer freshness and explicit lifecycle
-hooks, tested reconnect ownership across screens, and a longer-retention design
+Complete every-shot capture still needs hardware validation of the source and
+lifecycle hooks, tested reconnect ownership across screens, and a longer-retention design
 for receiver outages. A sleeping laptop exceeds this experiment's small RAM buffer.

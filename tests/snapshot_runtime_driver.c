@@ -6,6 +6,10 @@
 #include <string.h>
 
 #define SNAPSHOT_STOCK_RUNTIME_H
+#define KD360S_RECORDER_CONTEXT_H
+enum { RECORDER_BIND_OK = 1, RECORDER_BIND_FAILED = 0, RECORDER_BIND_RETAIN = -1 };
+static int recorder_bind(void *context);
+static void *recorder_context(void);
 #define COLLECTOR_IPV4_LE 0x010200c0u
 #define COLLECTOR_PORT_BE 0x25bau
 #define WIFI_OBJECT ((void *)0x3fca2128u)
@@ -38,14 +42,14 @@ static const char *string_address(uint32_t address);
 enum ack_kind { NO_ACK, GOOD_ACK, BAD_IP, BAD_PORT, BAD_FAMILY, BAD_ADDRESS_SIZE,
                 SHORT_ACK, LONG_ACK, BAD_MAGIC, BAD_SESSION, BAD_SEQUENCE, DUPLICATE_ACK };
 struct network_step { int connected, socket_result, send_result; enum ack_kind ack; };
-struct sent_record { uint32_t time; uint8_t bytes[64]; };
+struct sent_record { uint32_t time; uint8_t bytes[SNAPSHOT_BYTES]; };
 static struct {
     uint8_t memory[0x8000], heap[256];
     struct context context;
     jmp_buf finished;
     uint32_t clock, loop_durations[8];
     unsigned loops, loop_limit;
-    int allocation_ok, task_result, ready_on_create;
+    int allocation_ok, task_result, bind_result, bound, other_task;
     unsigned allocations, releases, tasks, begins, sockets, closes;
     char calls[128]; unsigned call_count;
     struct network_step steps[64]; unsigned step_count, step;
@@ -85,16 +89,22 @@ static void release(void *memory) {
     ++mock.releases; call('F');
 }
 static void fill_random(void *memory, uint32_t size) {
-    assert(size == 8); assert(mock.begins == 1);
-    for (unsigned i = 0; i < sizeof(mock.context.password); ++i) assert(mock.context.password[i] == 0);
+    assert(size == 8 && mock.begins == 0);
     for (unsigned i = 0; i < size; ++i) ((uint8_t *)memory)[i] = (uint8_t)(i + 1);
+}
+static int recorder_bind(void *context) {
+    assert(context == &mock.context);
+    if (mock.bind_result == 1) mock.bound = 1;
+    return mock.bind_result;
+}
+static void *recorder_context(void) {
+    return mock.bound && !mock.other_task ? &mock.context : NULL;
 }
 static int create_task(void (*entry)(void *), const char *name, uint32_t stack,
                        void *argument, uint32_t priority, void *handle, int core) {
     assert(entry == network_worker && !strcmp(name, "wpms"));
     assert(stack == 4096 && argument == &mock.context && priority == 1 && !handle && core == 0);
     ++mock.tasks; call('C');
-    if (mock.ready_on_create) store_release(&mock.context.ready, 1);
     return mock.task_result;
 }
 static int wifi_begin(void *object, const char *ssid, const char *password,
@@ -111,10 +121,10 @@ static int udp_close(int socket) { assert(socket == 7); ++mock.closes; return 0;
 static int udp_send(int socket, const void *data, uint32_t size, int flags,
                     const void *destination, uint32_t destination_size) {
     const struct ipv4_address *target = destination;
-    assert(socket == 7 && size == 64 && flags == 8 && destination_size == 16);
+    assert(socket == 7 && size == SNAPSHOT_BYTES && flags == 8 && destination_size == 16);
     assert(target->length == 16 && target->family == 2 && target->port == COLLECTOR_PORT_BE && target->ip == COLLECTOR_IPV4_LE);
     assert(mock.sends < 64); mock.sent[mock.sends].time = mock.clock;
-    memcpy(mock.sent[mock.sends++].bytes, data, 64); return step()->send_result;
+    memcpy(mock.sent[mock.sends++].bytes, data, SNAPSHOT_BYTES); return step()->send_result;
 }
 static int udp_receive(int socket, void *data, uint32_t size, int flags,
                        void *sender, uint32_t *sender_size) {
@@ -147,7 +157,7 @@ static void inline_string(uint32_t address, const char *value) {
     strcpy((char *)memory_at(address), value); *memory_at(address + 15) = 0x80;
 }
 static void reset(void) {
-    memset(&mock, 0, sizeof(mock)); mock.allocation_ok = 1; mock.task_result = 1;
+    memset(&mock, 0, sizeof(mock)); mock.allocation_ok = 1; mock.task_result = 1; mock.bind_result = 1;
     mock.loop_limit = 1; mock.loop_durations[0] = 100;
     inline_string(0x3fc9ff3cu, "network"); inline_string(0x3fc9ff2cu, "secret");
 }
@@ -161,9 +171,10 @@ static void run_network(unsigned count) {
 }
 static void network_fixture(unsigned records) {
     reset(); strcpy(mock.context.ssid, "network"); strcpy(mock.context.password, "secret");
-    for (unsigned i = 0; i < 64; ++i) mock.steps[i] = (struct network_step){1, 7, 64, NO_ACK};
+    mock.context.ready = 1;
+    for (unsigned i = 0; i < 64; ++i) mock.steps[i] = (struct network_step){1, 7, SNAPSHOT_BYTES, NO_ACK};
     memcpy(mock.context.session, "\1\2\3\4\5\6\7\10", 8);
-    for (unsigned i = 0; i < records; ++i) observe(&mock.context, i * 100, 7);
+    for (unsigned i = 0; i < records; ++i) observe(&mock.context, i * 100, 7, 1, 0);
 }
 static void test_strings(void) {
     reset(); char destination[65];
@@ -186,17 +197,20 @@ static void test_fallback(void) {
     reset(); mock.allocation_ok = 0; run_entry();
     assert(!strcmp(mock.calls, "SALR") && mock.allocations == 1 && !mock.tasks && !mock.releases);
     reset(); mock.task_result = 0; run_entry();
-    assert(!strcmp(mock.calls, "SACFLR") && mock.tasks == 1 && mock.releases == 1);
+    assert(!strcmp(mock.calls, "SACLR") && mock.tasks == 1 && mock.releases == 0);
+    assert(mock.context.ready == 0);
     reset(); inline_string(0x3fc9ff3cu, ""); run_entry();
     assert(!strcmp(mock.calls, "SAFLR") && !mock.tasks && mock.releases == 1);
     reset(); memset(memory_at(0x3fc9ff2cu), 0, 16); run_entry();
     assert(!strcmp(mock.calls, "SAFLR") && !mock.tasks && mock.releases == 1);
-    reset(); mock.ready_on_create = 0; run_entry();
-    assert(!strcmp(mock.calls, "SACLR") && !mock.context.ring.head);
+    reset(); mock.bind_result = 0; run_entry();
+    assert(!strcmp(mock.calls, "SAFLR") && !mock.tasks && mock.releases == 1);
+    reset(); mock.bind_result = -1; run_entry();
+    assert(!strcmp(mock.calls, "SALR") && !mock.tasks && !mock.releases && !mock.context.ready);
 }
 static void test_observation(void) {
     for (unsigned wrap = 0; wrap < 2; ++wrap) {
-        reset(); mock.ready_on_create = 1; mock.loop_limit = 3;
+        reset(); mock.loop_limit = 3;
         mock.clock = wrap ? UINT32_MAX - 63 : 0;
         mock.loop_durations[0] = 99; mock.loop_durations[1] = 1; mock.loop_durations[2] = 100;
         *memory_at(0x3fca2e6cu) = 1;
@@ -212,7 +226,7 @@ static void test_observation(void) {
         assert(!strcmp(mock.calls, "SACWLRWLRWLRW"));
         assert(mock.context.ring.head == 2 && mock.context.ring.sequence == 2);
         const uint8_t *first = mock.context.ring.records[0], *second = mock.context.ring.records[1];
-        assert(!memcmp(first, "WPS1\1\1\100\0", 8));
+        assert(!memcmp(first, "WPS2\2\1\200\0", 8));
         assert(get32(first + 20) == (wrap ? 36u : 100u));
         assert(get32(second + 20) == (wrap ? 136u : 200u));
         assert(get32(first + 28) == 1 && get32(second + 28) == 100);
@@ -238,8 +252,8 @@ static void test_reconnect(void) {
     mock.steps[5].ack = GOOD_ACK;
     run_network(6);
     assert(mock.sockets == 4 && mock.closes == 2 && mock.sends == 4);
-    assert(!memcmp(mock.sent[0].bytes, mock.sent[1].bytes, 64));
-    assert(!memcmp(mock.sent[0].bytes, mock.sent[2].bytes, 64));
+    assert(!memcmp(mock.sent[0].bytes, mock.sent[1].bytes, SNAPSHOT_BYTES));
+    assert(!memcmp(mock.sent[0].bytes, mock.sent[2].bytes, SNAPSHOT_BYTES));
     assert(get32(mock.sent[3].bytes + 16) == 1 && mock.context.ring.tail == 2);
 }
 static void test_ack_validation(void) {
@@ -258,11 +272,75 @@ static void test_retry(void) {
         run_network(27);
         assert(mock.sends == 2 && mock.context.ring.tail == 0);
         assert((uint32_t)(mock.sent[1].time - mock.sent[0].time) == 250);
-        assert(!memcmp(mock.sent[0].bytes, mock.sent[1].bytes, 64));
+        assert(!memcmp(mock.sent[0].bytes, mock.sent[1].bytes, SNAPSHOT_BYTES));
     }
+}
+static void test_lifecycle(void) {
+    reset(); mock.bound = 1; mock.context.ready = 1;
+    for (unsigned i = 0; i < 28; ++i) *memory_at(0x3fc9ce56u + i) = i + 40;
+    *memory_at(0x3fc9ff64u) = 7;
+    recorder_after(4, 123, 0x41100000);
+    recorder_after(5, 0, 0);
+    assert(mock.context.ring.head == 0);
+    recorder_after(2, 42, 0);
+    recorder_after(4, 123, 0x41100000);
+    recorder_after(4, 123, 0x41100000);
+    recorder_after(5, 0, 0);
+    recorder_after(3, 0, 0);
+    recorder_after(2, 43, 0);
+    recorder_after(3, 0, 0);
+    const unsigned kinds[] = {2, 4, 4, 5, 3, 2, 3};
+    assert(mock.context.ring.head == 7);
+    for (unsigned i = 0; i < 7; ++i) {
+        const uint8_t *p = mock.context.ring.records[i];
+        assert(p[5] == kinds[i] && get32(p + 20) == 0 && get32(p + 16) == i);
+        assert(get32(p + 60) == (i < 5 ? 1u : 2u));
+        assert(get32(p + 80) == (i < 5 ? 42u : 43u));
+        assert(p[54] == 7 && get32(p + 56) == 7);
+        assert(get32(p + 92) == 28 && !memcmp(p + 96, memory_at(0x3fc9ce56u), 28));
+    }
+    assert(get32(mock.context.ring.records[1] + 64) == 2);
+    assert(get32(mock.context.ring.records[2] + 64) == 3);
+    assert(get32(mock.context.ring.records[3] + 72) == 2);
+    assert(get32(mock.context.ring.records[2] + 84) == 0x41100000);
+    assert(get32(mock.context.ring.records[2] + 88) == 123);
+    recorder_after(3, 0, 0);
+    assert(get32(mock.context.ring.records[7] + 56) == 15);
+    recorder_after(2, 44, 0); recorder_after(2, 45, 0);
+    assert(get32(mock.context.ring.records[9] + 56) == 23);
+    mock.other_task = 1; recorder_after(2, 0, 0);
+    mock.other_task = 0; mock.context.ready = 0; recorder_after(2, 0, 0);
+    mock.context.ready = 1; mock.bound = 0; recorder_after(2, 0, 0);
+    assert(mock.context.ring.head == 10);
+    mock.bound = 1; mock.clock = UINT32_MAX; mock.context.pressure_generation = UINT32_MAX;
+    recorder_after(4, 0xfffffff0, 0x7fc01234);
+    assert(mock.context.pressure_generation == UINT32_MAX);
+    assert(get32(mock.context.ring.records[10] + 56) == 39);
+    assert(get32(mock.context.ring.records[10] + 84) == 0x7fc01234);
+    mock.clock = 0; recorder_after(5, 0, 0);
+    assert(get32(mock.context.ring.records[11] + 76) == 0);
+    for (unsigned i = 0; i < SNAPSHOT_CAPACITY; ++i) recorder_after(4, i, i);
+    assert(mock.context.ring.dropped == 12);
+    uint8_t ack[16]; const uint8_t *first = pending(&mock.context.ring);
+    memcpy(ack, "WPA1", 4); memcpy(ack + 4, first + 8, 8); memcpy(ack + 12, first + 16, 4);
+    assert(acknowledge(&mock.context.ring, ack, 16));
+    recorder_after(3, 0, 0);
+    assert(get32(mock.context.ring.records[0] + 24) == 12 && mock.context.ring.records[0][5] == 3);
 }
 int main(int argc, char **argv) {
     assert(argc == 2);
+    if (!strcmp(argv[1], "wire")) {
+        reset(); mock.bound = 1; mock.context.ready = 1;
+        memcpy(mock.context.session, "\1\2\3\4\5\6\7\10", 8);
+        for (unsigned i = 0; i < 28; ++i) *memory_at(0x3fc9ce56u + i) = i;
+        recorder_after(2, 17, 0);
+        mock.clock = 11; recorder_after(4, 456, 0x41180000);
+        mock.clock = 12; recorder_after(5, 0, 0);
+        mock.clock = 30; recorder_after(3, 0, 0);
+        assert(mock.context.ring.head == 4);
+        assert(fwrite(mock.context.ring.records, SNAPSHOT_BYTES, 4, stdout) == 4);
+        return 0;
+    }
     if (!strcmp(argv[1], "strings")) test_strings();
     else if (!strcmp(argv[1], "fallback")) test_fallback();
     else if (!strcmp(argv[1], "observation")) test_observation();
@@ -270,6 +348,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "reconnect")) test_reconnect();
     else if (!strcmp(argv[1], "ack-validation")) test_ack_validation();
     else if (!strcmp(argv[1], "retry")) test_retry();
+    else if (!strcmp(argv[1], "lifecycle")) test_lifecycle();
     else abort();
     printf("%s passed\n", argv[1]);
 }

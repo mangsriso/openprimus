@@ -303,7 +303,7 @@ class ImageTests(unittest.TestCase):
                         patch.object(builder, "write_package"), patch("sys.stdout", io.StringIO()):
                     self.assertEqual(builder.main(["--stock", str(stock), "--elf", str(elf),
                                                    "--output", str(root / "result")] + flag), 0)
-                build.assert_called_once_with(b"stock", b"elf", trial_defer_confirm=enabled)
+                build.assert_called_once_with(b"stock", b"elf", trial_defer_confirm=enabled, recorder_hooks=False)
                 with patch.object(snapshot, "build", return_value=manifest) as build, patch("sys.stdout", io.StringIO()):
                     self.assertEqual(snapshot.main(["--stock", str(stock), "--toolchain", str(root),
                                                     "--collector-ip", "192.0.2.1", "--output", str(root / "result")] + flag), 0)
@@ -319,11 +319,12 @@ class ImageTests(unittest.TestCase):
             stock.write_bytes(b"stock")
             with patch.object(snapshot.subprocess, "check_output", return_value="gcc 8.4.0 esp-2021r2-patch5"), \
                     patch.object(snapshot.subprocess, "run", side_effect=compile_fixture), \
+                    patch.object(snapshot, "verify_marker"), \
                     patch.object(snapshot, "build_image", return_value=(b"image", manifest)) as build, \
                     patch.object(snapshot, "write_package") as publish:
                 result = snapshot.build(root, stock, "192.0.2.1", 47653, root / "out", trial_defer_confirm=True)
-            build.assert_called_once_with(b"stock", elf_fixture(), trial_defer_confirm=True)
-            self.assertEqual(result["experiment"]["protocol"], "WPS1")
+            build.assert_called_once_with(b"stock", elf_fixture(), trial_defer_confirm=True, recorder_hooks=True)
+            self.assertEqual(result["experiment"]["protocol"], "WPS2")
             self.assertEqual(result["experiment"]["collector_ipv4"], "192.0.2.1")
             self.assertFalse(result["changes"]["trial_defer_confirm"]["mark_valid_added"])
             publish.assert_called_once_with(root / "out", b"image", result, elf=elf_fixture())

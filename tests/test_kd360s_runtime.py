@@ -42,3 +42,6 @@ class SnapshotRuntimeTests(unittest.TestCase):
 
     def test_one_outstanding_record_retries_at_250ms_including_clock_wrap(self):
         self.run_case('retry')
+
+    def test_hook_lifecycle_repeated_acquisitions_context_and_loss(self):
+        self.run_case('lifecycle')

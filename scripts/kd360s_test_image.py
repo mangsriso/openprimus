@@ -15,6 +15,7 @@ import tempfile
 
 from kd360s_firmware import DEFAULT_CACHE, TARGET, FirmwareError, Target, verify_bytes
 from kd360s_instrumentation import EXPECTED_SEGMENTS, audit_bytes, mapped_bytes
+from kd360s_hooks import plan_recorder_hooks
 
 PAYLOAD_START = 0x42106EA0
 PAYLOAD_LIMIT = 0x42110000
@@ -45,12 +46,22 @@ class Section:
 
 
 @dataclass(frozen=True)
+class ElfSymbol:
+    name: str
+    address: int
+    size: int
+    info: int
+    section_name: str
+
+
+@dataclass(frozen=True)
 class Payload:
     entry: int
     flags: int
     sections: tuple[Section, ...]
     data: bytes
     entry_stack_bytes: int
+    symbols: tuple[ElfSymbol, ...]
 
 
 def _slice(data: bytes, offset: int, size: int, label: str) -> bytes:
@@ -107,6 +118,7 @@ def parse_elf(data: bytes) -> Payload:
                 raise FirmwareError("ELF program file size exceeds memory size")
             _slice(data, offset, filesz, "program contents")
     sections = []
+    symbols = []
     symbol_tables = 0
     for header in headers[1:]:
         name_index, stype, sflags, address, offset, size, link, _, alignment, entsize = header
@@ -127,12 +139,14 @@ def parse_elf(data: bytes) -> Payload:
             if not strings or strings[0] or any(contents[:SYMBOL.size]):
                 raise FirmwareError("ELF symbol table lacks its null symbol/string")
             for position in range(SYMBOL.size, size, SYMBOL.size):
-                symbol_name, _, _, _, _, section_index = SYMBOL.unpack_from(contents, position)
+                symbol_name, symbol_address, symbol_size, symbol_info, _, section_index = SYMBOL.unpack_from(contents, position)
                 label = _name(strings, symbol_name)
                 if section_index == 0:
                     raise FirmwareError(f"ELF unresolved symbol: {label}")
                 if section_index not in (0xFFF1,) and not 0 < section_index < shnum:
                     raise FirmwareError("ELF common/extended/invalid symbol section")
+                symbols.append(ElfSymbol(label, symbol_address, symbol_size, symbol_info,
+                                         _name(names, headers[section_index][0]) if section_index < shnum else ""))
         if sflags & 2:
             if name not in (".text", ".rodata") or stype != 1 or sflags not in (2, 6) or not size:
                 raise FirmwareError(f"ELF allocated section is not nonwritable .text/.rodata: {name}")
@@ -168,7 +182,7 @@ def parse_elf(data: bytes) -> Payload:
     for section in sections:
         start = section.address - PAYLOAD_START
         blob[start : start + len(section.data)] = section.data
-    return Payload(entry, flags, tuple(sections), bytes(blob), stack_bytes)
+    return Payload(entry, flags, tuple(sections), bytes(blob), stack_bytes, tuple(symbols))
 
 
 def _seal(body: bytes) -> bytes:
@@ -187,11 +201,13 @@ def _seal(body: bytes) -> bytes:
     return sealed + hashlib.sha256(sealed).digest()
 
 
-def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) -> tuple[bytes, dict]:
+def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
+                recorder_hooks: bool = False) -> tuple[bytes, dict]:
     """Build only from the exact stock pin, then undo the edits and verify that pin."""
     source_audit = audit_bytes(stock)
     image = verify_bytes(stock)
     payload = parse_elf(elf)
+    hooks = plan_recorder_hooks(image, payload) if recorder_hooks else None
     code = image.segments[3]
     insertion_offset = code.offset + code.size
     if trial_defer_confirm:
@@ -215,6 +231,11 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) 
     struct.pack_into("<I", body, pointer_offset, payload.entry)
     if trial_defer_confirm:
         body[_TRIAL_BYTE_OFFSET] = _TRIAL_REPLACEMENT
+    if hooks:
+        for hook in hooks["patches"]:
+            offset = hook["file_offset"]
+            replacement = bytes.fromhex(hook["after_hex"])
+            body[offset:offset + len(replacement)] = replacement
     result = _seal(bytes(body))
     result_target = Target("firmware.experimental.bin", len(result), hashlib.sha256(result).hexdigest(), 9, 5)
     rebuilt = verify_bytes(result, result_target)
@@ -229,6 +250,11 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) 
     restored[pointer_offset:pointer_offset + 4] = old_pointer
     if trial_defer_confirm:
         restored[_TRIAL_BYTE_OFFSET] = _TRIAL_EXPECTED[4]
+    if hooks:
+        for hook in hooks["patches"]:
+            offset = hook["file_offset"]
+            original = bytes.fromhex(hook["before_hex"])
+            restored[offset:offset + len(original)] = original
     # Preserve the original checksum padding too, so the comparison covers every stock byte.
     restored.extend(stock[image.payload_end:])
     verify_bytes(bytes(restored))
@@ -276,6 +302,8 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) 
             "rollback_verified_on_device": False,
             "rollback_condition": "Rollback depends on the device bootloader configuration and OTA slot state.",
         }
+    if hooks:
+        manifest["changes"]["recorder_hooks"] = hooks
     return result, manifest
 
 
@@ -338,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True, help="new local package directory")
     parser.add_argument("--trial-defer-confirm", action="store_true",
                         help="offline trial that suppresses early stock OTA confirmation; rollback is not guaranteed")
+    parser.add_argument("--recorder-hooks", action="store_true",
+                        help="install the four pinned recorder entry detours from ELF wrapper symbols")
     args = parser.parse_args(argv)
     try:
         if args.output.resolve() in (args.stock.resolve(), args.elf.resolve()):
@@ -346,7 +376,8 @@ def main(argv: list[str] | None = None) -> int:
             stock = source.read(TARGET.size + 1)
         with args.elf.open("rb") as source:
             elf = source.read(MAX_ELF_SIZE + 1)
-        binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm)
+        binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm,
+                                       recorder_hooks=args.recorder_hooks)
         write_package(args.output, binary, manifest, elf=elf)
         print(json.dumps({"status": manifest["status"], "ready_to_flash": False,
                           "output": str(args.output), "sha256": manifest["output"]["sha256"]}, indent=2))

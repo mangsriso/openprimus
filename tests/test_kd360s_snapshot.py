@@ -24,14 +24,14 @@ static void ack_for(const uint8_t *p, uint8_t *a) {
 static void *producer(void *unused) {
     (void)unused;
     for (uint32_t i = 0; i < 50000; ++i) {
-        uint8_t p[64] = {0}; put32(p + 32, i);
+        uint8_t p[SNAPSHOT_BYTES] = {0}; put32(p + 32, i);
         while ((uint32_t)(ring.head - load_acquire(&ring.tail)) == SNAPSHOT_CAPACITY) sched_yield();
         assert(enqueue(&ring, p));
     }
     return 0;
 }
 int main(void) {
-    uint8_t p[64] = {0}, a[16];
+    uint8_t p[SNAPSHOT_BYTES] = {0}, a[16];
     p[8] = 0xfe;
     for (unsigned i = 0; i < SNAPSHOT_CAPACITY; ++i) assert(enqueue(&ring, p));
     assert(!enqueue(&ring, p)); assert(ring.dropped == 1); assert(ring.sequence == 129);

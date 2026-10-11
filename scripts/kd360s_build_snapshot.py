@@ -12,9 +12,25 @@ import sys
 import tempfile
 
 from kd360s_firmware import DEFAULT_CACHE, TARGET, FirmwareError
-from kd360s_test_image import build_image, write_package
+from kd360s_test_image import build_image, parse_elf, write_package
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def verify_marker(elf):
+    payload = parse_elf(elf)
+    symbols = [s for s in payload.symbols if s.name == 'recorder_key_marker']
+    if len(symbols) != 1:
+        raise FirmwareError('recorder requires one pthread key marker')
+    marker = symbols[0]
+    text = next(s for s in payload.sections if s.name == '.text')
+    if (marker.section_name != '.text' or marker.info & 15 != 2 or marker.size != 5
+            or marker.address % 4 or not text.address <= marker.address < marker.address + marker.size <= text.address + len(text.data)
+            or any(s.name != marker.name and s.info & 15 == 2 and s.address == marker.address for s in payload.symbols)):
+        raise FirmwareError('pthread key marker must be a distinct bounded executable function')
+    offset = marker.address - text.address
+    if text.data[offset:offset + marker.size] != bytes.fromhex('3641001df0'):
+        raise FirmwareError('pthread key marker must be an inert ENTRY/RETW function')
 
 
 def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=False):
@@ -32,23 +48,28 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
         elf = Path(temporary) / 'snapshot.elf'
         command = [str(compiler), '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-mlongcalls',
                    '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-fno-optimize-sibling-calls',
+                   '-fno-ipa-icf',
                    '-nostdlib', '-Wl,--abi-windowed', '-Wl,--build-id=none',
                    '-Wl,-T,' + str(directory / 'snapshot.ld'),
                    '-DCOLLECTOR_IPV4_LE=' + hex(int.from_bytes(address.packed, 'little')) + 'u',
                    '-DCOLLECTOR_PORT_BE=' + hex(int.from_bytes(port.to_bytes(2, 'big'), 'little')) + 'u',
-                   str(directory / 'snapshot.c'), '-o', str(elf)]
+                   str(directory / 'snapshot.c'), str(directory / 'hooks.S'), '-o', str(elf)]
         subprocess.run(command, check=True, cwd=temporary)
         with stock.open('rb') as stream:
             original = stream.read(TARGET.size + 1)
         elf_bytes = elf.read_bytes()
-        binary, manifest = build_image(original, elf_bytes, trial_defer_confirm=trial_defer_confirm)
+        verify_marker(elf_bytes)
+        binary, manifest = build_image(original, elf_bytes, trial_defer_confirm=trial_defer_confirm,
+                                       recorder_hooks=True)
         manifest['experiment'] = {
-            'name': 'normal_screen_snapshot_v1', 'collector_ipv4': str(address), 'collector_port': port,
-            'compiler': version, 'protocol': 'WPS1', 'observation_interval_min_ms': 100,
-            'ram_record_capacity': 128, 'power_loss_retention': False, 'freshness': 'unknown',
+            'name': 'lifecycle_recorder_v2', 'collector_ipv4': str(address), 'collector_port': port,
+            'compiler': version, 'protocol': 'WPS2', 'observation_interval_min_ms': 100,
+            'ram_record_capacity': 128, 'power_loss_retention': False,
+            'freshness': 'hook_invocations_with_source_generation_and_time',
             'every_shot_verified': False, 'wifi_policy': 'begin_once_after_setup_then_stock_ownership',
             'sources': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
-                        for name in ('snapshot.c', 'stock_runtime.h', 'protocol.h', 'snapshot.ld')},
+                        for name in ('snapshot.c', 'stock_runtime.h', 'protocol.h', 'snapshot.ld',
+                                     'hooks.S', 'recorder_context.h')},
         }
         write_package(output, binary, manifest, elf=elf_bytes)
         return manifest

@@ -73,9 +73,11 @@ Host tests execute the snapshot C logic with stock API and memory stubs. They
 do not execute the ESP32 SDK or prove RF, hardware, or control-loop timing.
 The SDL simulator exercises a separate host bridge.
 
-The snapshot payload still connects once and leaves later reconnect behavior to
-the stock SDK. It polls state, has no explicit shot-boundary or source-freshness
-hooks, and stores at most 128 records in RAM. Power loss removes that buffer.
+The recorder payload still connects once and leaves later reconnect behavior to
+the stock SDK. It combines polling with start/stop, pressure and accepted-RX
+hooks, and stores at most 128 records in RAM. Host and isolated Xtensa tests
+cover those hooks, but their hardware coverage and latency remain unverified.
+Power loss removes that buffer.
 Passing the first boot experiment does not establish continuous every-shot
-recording. Resolving network ownership, explicit lifecycle events, and retention
+recording. Resolving network ownership, hardware coverage, and retention
 remains required for that goal.

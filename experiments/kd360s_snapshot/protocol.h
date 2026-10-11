@@ -2,7 +2,7 @@
 #define SNAPSHOT_PROTOCOL_H
 #include <stdint.h>
 #define SNAPSHOT_CAPACITY 128u
-#define SNAPSHOT_BYTES 64u
+#define SNAPSHOT_BYTES 128u
 struct snapshot_ring {
     uint32_t head;
     uint32_t tail;
@@ -26,7 +26,7 @@ static inline int bytes_equal(const uint8_t *a, const uint8_t *b, unsigned n) {
     for (unsigned i = 0; i < n; ++i) if (a[i] != b[i]) return 0;
     return 1;
 }
-static inline int enqueue(struct snapshot_ring *ring, uint8_t packet[64]) {
+static inline int enqueue(struct snapshot_ring *ring, uint8_t packet[SNAPSHOT_BYTES]) {
     if (ring->sequence == UINT32_MAX) return 0;
     put32(packet + 16, ring->sequence++);
     if ((uint32_t)(ring->head - load_acquire(&ring->tail)) == SNAPSHOT_CAPACITY) {
@@ -35,7 +35,7 @@ static inline int enqueue(struct snapshot_ring *ring, uint8_t packet[64]) {
     }
     put32(packet + 24, ring->dropped);
     uint8_t *slot = ring->records[ring->head % SNAPSHOT_CAPACITY];
-    for (unsigned i = 0; i < 64; ++i) slot[i] = packet[i];
+    for (unsigned i = 0; i < SNAPSHOT_BYTES; ++i) slot[i] = packet[i];
     store_release(&ring->head, ring->head + 1);
     return 1;
 }

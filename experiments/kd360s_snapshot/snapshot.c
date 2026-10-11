@@ -1,5 +1,6 @@
 #include "protocol.h"
 #include "stock_runtime.h"
+#include "recorder_context.h"
 
 struct ipv4_address {
     uint8_t length;
@@ -13,6 +14,10 @@ struct context {
     struct snapshot_ring ring;
     uint32_t ready;
     uint8_t session[8];
+    uint32_t shot_id, shot_open, start_argument;
+    uint32_t pressure_generation, pressure_ms, pressure_bits, pressure_adc;
+    uint32_t rx_generation, rx_ms, source_flags;
+    uint8_t rx[28];
     char ssid[33];
     char password[65];
 };
@@ -35,8 +40,6 @@ static void network_worker(void *argument) {
     /* Only the initial connection is ours; stock settings retain later Wi-Fi ownership. */
     wifi_begin(WIFI_OBJECT, c->ssid, c->password, 0, 0, 1);
     zero(c->password, sizeof(c->password));
-    fill_random(c->session, sizeof(c->session));
-    store_release(&c->ready, 1);
     struct ipv4_address destination;
     zero(&destination, sizeof(destination));
     destination.length = 16;
@@ -63,7 +66,7 @@ static void network_worker(void *argument) {
         if (!packet) continue;
         uint32_t now = millis();
         if (!awaiting_ack || (uint32_t)(now - last_send) >= 250) {
-            if (udp_send(socket, packet, 64, 8, &destination, 16) != 64) {
+            if (udp_send(socket, packet, SNAPSHOT_BYTES, 8, &destination, 16) != SNAPSHOT_BYTES) {
                 udp_close(socket);
                 socket = -1;
                 awaiting_ack = 0;
@@ -83,11 +86,11 @@ static void network_worker(void *argument) {
             && acknowledge(&c->ring, ack, 16)) awaiting_ack = 0;
     }
 }
-static void observe(struct context *c, uint32_t now, uint32_t duration) {
-    uint8_t packet[64];
+static void observe(struct context *c, uint32_t now, uint32_t duration, uint32_t kind, uint32_t flags) {
+    uint8_t packet[SNAPSHOT_BYTES];
     zero(packet, sizeof(packet));
-    packet[0] = 'W'; packet[1] = 'P'; packet[2] = 'S'; packet[3] = '1';
-    packet[4] = 1; packet[5] = 1; packet[6] = 64;
+    packet[0] = 'W'; packet[1] = 'P'; packet[2] = 'S'; packet[3] = '2';
+    packet[4] = 2; packet[5] = kind; packet[6] = SNAPSHOT_BYTES;
     for (unsigned i = 0; i < 8; ++i) packet[8 + i] = c->session[i];
     put32(packet + 20, now);
     put32(packet + 28, duration);
@@ -103,8 +106,59 @@ static void observe(struct context *c, uint32_t now, uint32_t duration) {
     packet[53] = read8(0x3fc9ca6au);
     uint16_t diagnostic = read16(0x3fc9ff64u);
     packet[54] = diagnostic; packet[55] = diagnostic >> 8;
-    put32(packet + 56, 1);
+    put32(packet + 56, 1 | c->source_flags | flags);
+    put32(packet + 60, c->shot_id);
+    put32(packet + 64, c->pressure_generation);
+    put32(packet + 68, c->pressure_ms);
+    put32(packet + 72, c->rx_generation);
+    put32(packet + 76, c->rx_ms);
+    put32(packet + 80, c->start_argument);
+    put32(packet + 84, c->pressure_bits);
+    put32(packet + 88, c->pressure_adc);
+    if (c->source_flags & 4) {
+        put32(packet + 92, sizeof(c->rx));
+        for (unsigned i = 0; i < sizeof(c->rx); ++i) packet[96 + i] = c->rx[i];
+    }
     enqueue(&c->ring, packet);
+}
+static void increment(struct context *c, uint32_t *counter) {
+    if (*counter == UINT32_MAX) c->source_flags |= 32;
+    else ++*counter;
+}
+void recorder_after(uint32_t kind, uint32_t argument, uint32_t result) {
+    struct context *c = recorder_context();
+    if (!c || !load_acquire(&c->ready)) return;
+    uint32_t now = millis(), flags = 0;
+    switch (kind) {
+    case 2:
+        if (c->shot_open) flags |= 16;
+        increment(c, &c->shot_id);
+        c->shot_open = 1;
+        c->start_argument = argument;
+        break;
+    case 3:
+        if (!c->shot_open) flags |= 8;
+        c->shot_open = 0;
+        break;
+    case 4:
+        increment(c, &c->pressure_generation);
+        c->pressure_ms = now;
+        c->pressure_bits = result;
+        c->pressure_adc = argument;
+        c->source_flags |= 2;
+        if (!c->shot_open) return;
+        break;
+    case 5:
+        increment(c, &c->rx_generation);
+        c->rx_ms = now;
+        for (unsigned i = 0; i < sizeof(c->rx); ++i) c->rx[i] = read8(0x3fc9ce56u + i);
+        c->source_flags |= 4;
+        if (!c->shot_open) return;
+        break;
+    default:
+        return;
+    }
+    observe(c, now, 0, kind, flags);
 }
 void snapshot_entry(void *argument) {
     (void)argument;
@@ -114,12 +168,18 @@ void snapshot_entry(void *argument) {
     struct context *c = allocate(sizeof(struct context));
     if (c) {
         zero(c, sizeof(*c));
-        if (!copy_string(c->ssid, sizeof(c->ssid), 0x3fc9ff3cu) || !c->ssid[0]
-            || !copy_string(c->password, sizeof(c->password), 0x3fc9ff2cu)
-            || create_task(network_worker, (const char *)task_name, 4096, c, 1, 0, 0) != 1) {
+        int bound = RECORDER_BIND_FAILED;
+        if (copy_string(c->ssid, sizeof(c->ssid), 0x3fc9ff3cu) && c->ssid[0]
+            && copy_string(c->password, sizeof(c->password), 0x3fc9ff2cu)) {
+            fill_random(c->session, sizeof(c->session));
+            bound = recorder_bind(c);
+        }
+        if (bound != RECORDER_BIND_OK || create_task(network_worker, (const char *)task_name, 4096, c, 1, 0, 0) != 1) {
             zero(c->password, sizeof(c->password));
-            release(c);
+            if (bound == RECORDER_BIND_FAILED) release(c);
             c = 0;
+        } else {
+            store_release(&c->ready, 1);
         }
     }
     uint32_t last_observation = millis();
@@ -130,7 +190,7 @@ void snapshot_entry(void *argument) {
         stock_serial();
         uint32_t now = millis();
         if (c && load_acquire(&c->ready) && (uint32_t)(now - last_observation) >= 100) {
-            observe(c, now, now - start);
+            observe(c, now, now - start, 1, 0);
             last_observation = now;
         }
     }

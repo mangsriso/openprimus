@@ -2,8 +2,8 @@
 
 The following instruction witnesses apply to application SHA-256
 `ac94398fde154cd8d29709e82990fd6dce53faa69b28e713f2c2a5dd4c65f5b4`.
-They refine candidate instrumentation points. They do not implement hooks or
-establish complete writer coverage. Retained local analysis is in the task's
+They support the implemented adapters described below. They do not establish
+complete writer coverage. Retained local analysis is in the task's
 `evidence/flash-readiness-hooks/` directory, including `audit_hooks.py`, JSON,
 assembly listings, and direct-call linker rejection results.
 
@@ -60,3 +60,42 @@ events and declares freshness unknown. A 128-record RAM ring cannot preserve
 all observations across long receiver outages or power loss. These remain code
 and design work, in addition to the separate hardware validation. Passing an
 inert first boot cannot make this payload a complete every-shot recorder.
+## Executable recorder adapters
+
+The direct-call range limit is now addressed by four original-entry detours.
+Each jumps over an inline destination literal, loads it into a9, and transfers
+to a CALL8 wrapper in the appended page. The wrapper calls a relocated prefix,
+which rejoins the untouched original function; its return then reaches the
+recorder callback. The original start function's out-of-line branches remain
+in place. `scripts/kd360s_hooks.py` fixes entry spans and literal witnesses to
+the pinned image, and the image builder reverses every patch to stock.
+
+The wrapper uses an 80-byte frame. Independent review found overlap between
+saved inputs and Xtensa's register-window spill area in an earlier 64-byte
+design. The final wrapper saves only its first input, preserves six register
+arguments and four return words, and uses no before callback.
+
+The [portable QEMU check](../experiments/kd360s_snapshot/verification/README.md)
+executed 13 cases using the production assembly. RX, stop and pressure use
+their actual stock bodies. Start uses its actual relocated prefix followed by
+a synthetic return suffix. It exercised 208 window overflows and 208 underflows
+and rejected a negative control that clobbered a10 instead of a9. These tests
+do not execute the whole stock application or prove interrupt/control timing.
+
+The recorder binds its allocated context through a genuine pthread key.
+Stock exposes only TLS slot 0 and pthread already owns it. The private key
+registry head is at `0x3fca3184`, its lock at `0x3fc973dc`, and each node holds
+key/destructor/next at offsets 0/4/8. A distinct, inert destructor identifies
+the recorder's key during locked lookup. The marker is checked in the final
+ELF; `pthread_getspecific` runs after unlocking. The sender holds the same
+boot-long context through its task argument. Host tests include concurrent
+registry mutations and more than 256 legitimate keys.
+
+Stock imports are key-create `0x42073374`, key-delete `0x420733bc`, get-specific
+`0x42073400`, set-specific `0x42073428`, lock-enter `0x403811b0`, and lock-exit
+`0x403812f4`. Their stock disassembly was compared with the official Arduino
+2.0.14 SDK and [IDF pthread source](https://github.com/espressif/esp-idf/blob/v4.4.6/components/pthread/pthread_local_storage.c).
+This adapter is specific to the pinned binary, not a portable pthread API.
+
+The [recorder contract](../KD360S_RECORDER_DESIGN.md) documents the selected
+design, event timing, source counters, loss behavior and remaining gates.

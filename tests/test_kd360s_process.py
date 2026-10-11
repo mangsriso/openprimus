@@ -28,8 +28,8 @@ class ProcessRecoveryTests(unittest.TestCase):
 #include "protocol.h"
 int main(void) {
     struct snapshot_ring ring = {0};
-    uint8_t packet[64] = {0}, ack[16];
-    memcpy(packet, "WPS1", 4); packet[4] = 1; packet[5] = 1; packet[6] = 64;
+    uint8_t packet[SNAPSHOT_BYTES] = {0}, ack[16];
+    memcpy(packet, "WPS2", 4); packet[4] = 2; packet[5] = 1; packet[6] = SNAPSHOT_BYTES;
     put32(packet + 8, 0x76543210); put32(packet + 12, 0xfedcba98);
     put32(packet + 32, 0x41100000); put32(packet + 36, 0x3f800000);
     put32(packet + 56, 1);
@@ -40,7 +40,7 @@ int main(void) {
     assert(ring.dropped == 32);
     for (unsigned i = 0; i < 129; ++i) {
         const uint8_t *next = pending(&ring); assert(next);
-        assert(fwrite(next, 1, 64, stdout) == 64); assert(!fflush(stdout));
+        assert(fwrite(next, 1, SNAPSHOT_BYTES, stdout) == SNAPSHOT_BYTES); assert(!fflush(stdout));
         assert(fread(ack, 1, 16, stdin) == 16);
         assert(acknowledge(&ring, ack, 16));
         if (i == 0) {
@@ -71,7 +71,7 @@ int main(void) {
                     processes.append(producer)
                     originals = {}
                     for index in range(129):
-                        packet = self.read_exact(producer.stdout, 64)
+                        packet = self.read_exact(producer.stdout, 128)
                         seq = struct.unpack_from('<I', packet, 16)[0]
                         originals[seq] = packet.hex()
                         expected = b'WPA1' + packet[8:16] + packet[16:20]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive experimental KD360S snapshots; freshness and shot coverage are unknown."""
+"""Archive WPS1 observations and WPS2 recorder events without discarding raw bytes."""
 
 from __future__ import annotations
 
@@ -25,17 +25,18 @@ PORT = 47653
 APPLICATION_ID = 0x57505331
 TRANSIENT_NETWORK_ERRORS = {errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN,
                             errno.ENOBUFS, errno.EAGAIN, errno.ECONNREFUSED}
-SCHEMA = """
-BEGIN IMMEDIATE;
+TABLE_SQL = """
 CREATE TABLE snapshots (
     session TEXT NOT NULL,
     seq INTEGER NOT NULL,
     received_ns INTEGER NOT NULL,
     sender_ip TEXT NOT NULL,
     sender_port INTEGER NOT NULL,
-    packet BLOB NOT NULL CHECK(length(packet) = 64),
+    packet BLOB NOT NULL CHECK(length(packet) IN (64, 128)),
     PRIMARY KEY(session, seq)
 );
+"""
+IMMUTABILITY_SQL = """
 CREATE TRIGGER immutable_replace BEFORE INSERT ON snapshots
 WHEN EXISTS (SELECT 1 FROM snapshots WHERE session=NEW.session AND seq=NEW.seq)
 BEGIN SELECT RAISE(ABORT, 'raw snapshots are immutable'); END;
@@ -43,10 +44,17 @@ CREATE TRIGGER immutable_update BEFORE UPDATE ON snapshots
 BEGIN SELECT RAISE(ABORT, 'raw snapshots are immutable'); END;
 CREATE TRIGGER immutable_delete BEFORE DELETE ON snapshots
 BEGIN SELECT RAISE(ABORT, 'raw snapshots are immutable'); END;
+"""
+SCHEMA = "BEGIN IMMEDIATE;" + TABLE_SQL + IMMUTABILITY_SQL + """
 PRAGMA application_id = 1464881969;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 COMMIT;
 """
+KINDS = {1: "observation", 2: "start", 3: "stop", 4: "pressure", 5: "accepted_rx"}
+V2_COLUMNS = ["protocol", "kind", "shot_id", "pressure_generation", "pressure_acquired_ms",
+              "rx_generation", "rx_accepted_ms", "start_argument", "calibrated_pressure_bits",
+              "calibrated_pressure", "filtered_adc_bits", "accepted_rx_hex", "boundary_anomaly",
+              "counter_saturated", "pressure_observed", "rx_observed"]
 
 
 class ProtocolError(ValueError):
@@ -58,15 +66,19 @@ class ConflictError(ValueError):
 
 
 def decode(packet):
-    if len(packet) != PACKET.size:
-        raise ProtocolError("snapshot length must be 64 bytes")
+    if len(packet) not in (PACKET.size, 128):
+        raise ProtocolError("record length must be 64 or 128 bytes")
     (magic, version, kind, length, session, seq, observed, dropped, loop_ms,
      pressure, flow, target_pressure, target_flow, volume, mode, state, active,
-     pending_stop, diagnostic, flags, reserved) = PACKET.unpack(packet)
-    if (magic, version, kind, length) != (b"WPS1", 1, 1, 64):
-        raise ProtocolError("unsupported snapshot header")
-    if flags != 1 or reserved != 0:
-        raise ProtocolError("freshness-unknown flag required; other flags/reserved unsupported")
+     pending_stop, diagnostic, flags, reserved) = PACKET.unpack(packet[:64])
+    if len(packet) == 64:
+        if (magic, version, kind, length) != (b"WPS1", 1, 1, 64):
+            raise ProtocolError("unsupported snapshot header")
+        if flags != 1 or reserved != 0:
+            raise ProtocolError("freshness-unknown flag required; other flags/reserved unsupported")
+    elif ((magic, version, length) != (b"WPS2", 2, 128) or kind not in KINDS
+          or flags & ~63 or not flags & 1 or any(packet[124:])):
+        raise ProtocolError("unsupported recorder header, flags or reserved bytes")
     result = {
         "session": f"{session:016x}", "seq": seq, "observation_ms": observed,
         "dropped_cumulative": dropped, "loop_duration_ms": loop_ms,
@@ -80,6 +92,23 @@ def decode(packet):
         value = struct.unpack("<f", struct.pack("<I", bits))[0]
         result[name + "_bits"] = bits
         result[name] = value if math.isfinite(value) else None
+    if len(packet) == 128:
+        pressure_seq, pressure_ms, rx_seq, rx_ms, start_arg, calibrated, adc, rx_size = struct.unpack_from("<8I", packet, 64)
+        if (bool(flags & 2) != bool(pressure_seq) or bool(flags & 4) != bool(rx_seq)
+                or (kind == 4 and not flags & 2) or (kind == 5 and not flags & 4)):
+            raise ProtocolError("source kind, presence flags and generations disagree")
+        if rx_size != (28 if flags & 4 else 0) or (not flags & 4 and any(packet[96:124])):
+            raise ProtocolError("accepted RX presence and byte count disagree")
+        value = struct.unpack("<f", struct.pack("<I", calibrated))[0]
+        result.update(protocol="WPS2", kind=KINDS[kind], shot_id=reserved,
+                      pressure_generation=pressure_seq, pressure_acquired_ms=pressure_ms,
+                      rx_generation=rx_seq, rx_accepted_ms=rx_ms, start_argument=start_arg,
+                      calibrated_pressure_bits=calibrated,
+                      calibrated_pressure=value if flags & 2 and math.isfinite(value) else None,
+                      filtered_adc_bits=adc, accepted_rx_hex=packet[96:96 + rx_size].hex(),
+                      boundary_anomaly=bool(flags & 24), counter_saturated=bool(flags & 32),
+                      pressure_observed=bool(flags & 2), rx_observed=bool(flags & 4),
+                      freshness="source_hook_invocations")
     return result
 
 
@@ -94,8 +123,17 @@ def open_archive(path, writable=False):
         tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         if writable and application == 0 and version == 0 and not tables:
             connection.executescript(SCHEMA)
-        elif application != APPLICATION_ID or version != 1:
-            raise ValueError("not a supported WPS1 snapshot archive")
+        elif application != APPLICATION_ID or version not in (1, 2):
+            raise ValueError("not a supported WPS snapshot archive")
+        elif version == 1 and writable:
+            connection.executescript("""
+                BEGIN IMMEDIATE;
+                DROP TRIGGER immutable_replace;
+                DROP TRIGGER immutable_update;
+                DROP TRIGGER immutable_delete;
+                ALTER TABLE snapshots RENAME TO snapshots_v1;
+            """ + TABLE_SQL + "INSERT INTO snapshots SELECT * FROM snapshots_v1; DROP TABLE snapshots_v1;"
+                + IMMUTABILITY_SQL + "PRAGMA user_version=2; COMMIT;")
         connection.execute("SELECT session,seq,received_ns,sender_ip,sender_port,packet FROM snapshots LIMIT 0")
         return connection
     except Exception:
@@ -148,7 +186,7 @@ def serve(database, bind, port, stop=None, ready=None):
             ready(udp.getsockname())
         else:
             print(json.dumps({"listening": list(udp.getsockname()), "database": str(database),
-                              "protocol": "WPS1", "freshness": "unknown"}), flush=True)
+                              "protocols": ["WPS1", "WPS2"]}), flush=True)
         while stop is None or not stop.is_set():
             try:
                 result = receive_one(connection, udp)
@@ -180,10 +218,62 @@ def write_export(connection, format_name, output, session=None):
         for row in rows:
             output.write(json.dumps(row, allow_nan=False, sort_keys=True) + "\n")
     else:
-        columns = list(decode(synthetic_packet())) + ["received_ns", "sender_ip", "sender_port"]
+        columns = list(decode(synthetic_packet())) + V2_COLUMNS + ["received_ns", "sender_ip", "sender_port"]
         writer = csv.DictWriter(output, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def iter_shots(connection, session=None):
+    """Summarize observed WPS2 boundaries; never infer unseen shots or power-loss data."""
+    shot = None
+    previous = None
+    for row in iter_snapshots(connection, session):
+        if row.get("protocol") != "WPS2" or row["shot_id"] == 0:
+            continue
+        identity = (row["session"], row["shot_id"])
+        if shot is None or identity != (shot["session"], shot["shot_id"]):
+            if shot is not None:
+                yield _finish_shot(shot)
+            shot = {"session": row["session"], "shot_id": row["shot_id"], "start_seq": None,
+                    "stop_seq": None, "start_ms": None, "stop_ms": None, "starts": 0, "stops": 0,
+                    "pressure_records": 0, "rx_records": 0, "missing_records": 0,
+                    "reported_drops": 0, "boundary_anomaly": False, "counter_saturated": False,
+                    "preceding_gap": bool(previous and previous["session"] == row["session"]
+                                          and row["seq"] != previous["seq"] + 1)}
+        if shot["stop_seq"] is None:
+            if previous and previous["session"] == row["session"] and previous["shot_id"] == row["shot_id"]:
+                shot["missing_records"] += max(0, row["seq"] - previous["seq"] - 1)
+                shot["reported_drops"] += max(0, row["dropped_cumulative"] - previous["dropped_cumulative"])
+            shot["pressure_records"] += row["kind"] == "pressure"
+            shot["rx_records"] += row["kind"] == "accepted_rx"
+            shot["boundary_anomaly"] |= row["boundary_anomaly"]
+            shot["counter_saturated"] |= row["counter_saturated"]
+        if row["kind"] == "start":
+            shot["starts"] += 1
+            if shot["start_seq"] is None:
+                shot["start_seq"], shot["start_ms"] = row["seq"], row["observation_ms"]
+        if row["kind"] == "stop":
+            shot["stops"] += 1
+            shot["stop_seq"], shot["stop_ms"] = row["seq"], row["observation_ms"]
+        previous = row
+    if shot is not None:
+        yield _finish_shot(shot)
+
+
+def _finish_shot(shot):
+    reasons = []
+    if shot["starts"] != 1:
+        reasons.append("missing_or_repeated_start")
+    if shot["stops"] != 1:
+        reasons.append("missing_or_repeated_stop")
+    if shot["start_seq"] is not None and shot["stop_seq"] is not None and shot["start_seq"] >= shot["stop_seq"]:
+        reasons.append("boundary_order")
+    for field in ("missing_records", "reported_drops", "boundary_anomaly", "counter_saturated", "preceding_gap"):
+        if shot[field]:
+            reasons.append(field)
+    return {**shot, "coverage": "incomplete_or_uncertain" if reasons else "boundaries_observed_no_reported_gaps",
+            "reasons": reasons, "hardware_coverage_verified": False}
 
 
 def synthetic_packet(seq=0, session=0xfedcba9876543210):
@@ -273,6 +363,9 @@ def main(argv=None):
     export.add_argument("--session", help="16 lowercase hexadecimal digits")
     inspect = commands.add_parser("inspect")
     inspect.add_argument("database", type=Path)
+    shots = commands.add_parser("shots", help="summarize WPS2 shot boundaries and observed loss")
+    shots.add_argument("database", type=Path)
+    shots.add_argument("--session")
     commands.add_parser("self-test", help="synthetic loopback test, no machine access")
     args = parser.parse_args(argv)
     try:
@@ -286,10 +379,13 @@ def main(argv=None):
             with closing(open_archive(args.database)) as connection:
                 if args.command == "export":
                     write_export(connection, args.format, sys.stdout, args.session)
+                elif args.command == "shots":
+                    for shot in iter_shots(connection, args.session):
+                        print(json.dumps(shot, sort_keys=True))
                 else:
                     sessions = connection.execute(
                         "SELECT session,COUNT(*),MIN(seq),MAX(seq) FROM snapshots GROUP BY session ORDER BY session")
-                    print(json.dumps({"protocol": "WPS1", "freshness": "unknown", "sessions": [
+                    print(json.dumps({"protocols": ["WPS1", "WPS2"], "sessions": [
                         {"session": session, "records": count, "first_seq": first, "last_seq": last}
                         for session, count, first, last in sessions]}))
     except KeyboardInterrupt:

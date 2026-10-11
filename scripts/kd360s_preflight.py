@@ -54,12 +54,17 @@ def _canonical(value: object) -> str:
 
 def verify_package(stock: bytes, elf: bytes, binary: bytes, manifest: dict,
                    *, trial_defer_confirm: bool = False) -> dict:
-    expected, expected_manifest = build_image(stock, elf, trial_defer_confirm=trial_defer_confirm)
-    if binary != expected:
-        raise FirmwareError('package bytes differ from the image rebuilt from stock and ELF')
     if not isinstance(manifest, dict):
         raise FirmwareError('manifest must be a JSON object')
     _canonical(manifest)
+    changes = manifest.get('changes')
+    if not isinstance(changes, dict):
+        raise FirmwareError('manifest changes must be an object')
+    recorder_hooks = 'recorder_hooks' in changes
+    expected, expected_manifest = build_image(stock, elf, trial_defer_confirm=trial_defer_confirm,
+                                               recorder_hooks=recorder_hooks)
+    if binary != expected:
+        raise FirmwareError('package bytes differ from the image rebuilt from stock and ELF')
     base = {key: value for key, value in manifest.items() if key != 'experiment'}
     if _canonical(base) != _canonical(expected_manifest):
         raise FirmwareError('manifest differs from the rebuilt image manifest')
@@ -76,6 +81,7 @@ def verify_package(stock: bytes, elf: bytes, binary: bytes, manifest: dict,
         'output_size': len(binary),
         'sector_rounded_size': (len(binary) + SECTOR_SIZE - 1) // SECTOR_SIZE * SECTOR_SIZE,
         'trial_defer_confirm': trial_defer_confirm,
+        'recorder_hooks': recorder_hooks,
         'unverified_metadata': {'experiment': experiment},
         'source_to_elf_verified': False,
         'backup_inspection': None,
