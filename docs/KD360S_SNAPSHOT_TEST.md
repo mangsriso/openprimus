@@ -21,6 +21,30 @@ conflict rejection, collector restart and CSV/JSONL exports. Its packets are
 synthetic. The C ring test separately exercises buffer overflow, stale ACKs,
 index wrap and 50,000 ordered deliveries between two host threads.
 
+## Run the payload control flow on the host
+
+```sh
+python3 -m unittest discover -s tests -p test_kd360s_runtime.py -v
+```
+
+These seven tests compile the actual `snapshot.c` with deterministic replacements
+for stock memory reads and SDK calls. They exercise credential copying, failure
+fallback to the stock loop, call order, 100 ms observation spacing, raw fields,
+clock wrap, socket recovery, ACK validation and the 250 ms retry interval.
+The driver stops infinite loops after a fixed number of iterations.
+
+The tests preserve an existing limitation. If the initial `WiFi.begin` fails and
+the SDK never reports a connection, the worker does not call `begin` again.
+It marks capture ready and retains records in RAM until the ring fills. The tests
+also verify that a simulated SDK reconnection allows the same pending record to
+be sent again. They do not establish that the real stock SDK reconnects.
+
+`stock_runtime.h` holds the fixed-address imports, memory access and Xtensa ABI
+requirements. The host driver substitutes that boundary and includes the same
+payload source and `protocol.h`. No host test executes those import addresses,
+the Xtensa instructions, SDK scheduling, physical networking or machine control.
+The native test result does not satisfy the hardware gates below.
+
 ## Process recovery and independent image checks
 
 The process integration test compiles a host producer against the actual

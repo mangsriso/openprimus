@@ -47,7 +47,7 @@ def build(toolchain, stock, collector, port, output):
             'ram_record_capacity': 128, 'power_loss_retention': False, 'freshness': 'unknown',
             'every_shot_verified': False, 'wifi_policy': 'begin_once_after_setup_then_stock_ownership',
             'sources': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
-                        for name in ('snapshot.c', 'protocol.h', 'snapshot.ld')},
+                        for name in ('snapshot.c', 'stock_runtime.h', 'protocol.h', 'snapshot.ld')},
         }
         write_package(output, binary, manifest)
         return manifest
