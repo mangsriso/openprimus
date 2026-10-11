@@ -5,6 +5,10 @@ The offline trial targets only KD360S 1.0.13_HK application SHA-256
 A matching version string on the display does not establish an identical installed binary.
 The local packages are not cleared for installation. No machine has booted them.
 
+Run the [offline preflight](KD360S_PREFLIGHT.md) to reproduce each package from
+its retained ELF and inspect a private flash dump when available. This check
+does not clear the device requirements below.
+
 ## Establish recovery before installing
 
 Record the actual board and the recovery interface that works without the application.
@@ -33,6 +37,11 @@ This is separate from ESP32-S3 ROM USB DFU and serial download mode.
 No deployment command is provided until the machine's recovery and image-acceptance
 conditions are established. Details and addresses are in the
 [boot and updater evidence](KD360S_BOOT_AND_UPDATE.md).
+
+The official [KD-360S user manual](https://www.wpmcoffee.com/cdn/shop/files/KD-360S_EN_IB.pdf?v=1786689868)
+describes Wi-Fi firmware update on printed page 17. The manual reviewed on
+2026-10-11 supplies no USB/ROM recovery procedure. It cannot establish the board
+wiring or the independent recovery conditions for this trial.
 
 ## Use staged experiments
 

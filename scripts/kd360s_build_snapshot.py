@@ -40,7 +40,8 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
         subprocess.run(command, check=True, cwd=temporary)
         with stock.open('rb') as stream:
             original = stream.read(TARGET.size + 1)
-        binary, manifest = build_image(original, elf.read_bytes(), trial_defer_confirm=trial_defer_confirm)
+        elf_bytes = elf.read_bytes()
+        binary, manifest = build_image(original, elf_bytes, trial_defer_confirm=trial_defer_confirm)
         manifest['experiment'] = {
             'name': 'normal_screen_snapshot_v1', 'collector_ipv4': str(address), 'collector_port': port,
             'compiler': version, 'protocol': 'WPS1', 'observation_interval_min_ms': 100,
@@ -49,7 +50,7 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
             'sources': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                         for name in ('snapshot.c', 'stock_runtime.h', 'protocol.h', 'snapshot.ld')},
         }
-        write_package(output, binary, manifest)
+        write_package(output, binary, manifest, elf=elf_bytes)
         return manifest
 
 

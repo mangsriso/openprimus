@@ -279,9 +279,15 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False) 
     return result, manifest
 
 
-def write_package(output: Path, binary: bytes, manifest: dict) -> Path:
-    """Publish complete files without replacing any path; manifest is the commit marker."""
-    files = {"firmware.experimental.bin": binary, "manifest.json": (json.dumps(manifest, indent=2) + "\n").encode()}
+def write_package(output: Path, binary: bytes, manifest: dict, *, elf: bytes | None = None) -> Path:
+    """Publish matching files without replacing paths; write a new manifest last."""
+    files = {"firmware.experimental.bin": binary}
+    if elf is not None:
+        if (manifest.get("elf", {}).get("size") != len(elf)
+                or manifest.get("elf", {}).get("sha256") != hashlib.sha256(elf).hexdigest()):
+            raise FirmwareError("retained ELF differs from the package manifest")
+        files["payload.elf"] = elf
+    files["manifest.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
     created_directory = False
     present = set()
     if output.exists() or output.is_symlink():
@@ -341,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         with args.elf.open("rb") as source:
             elf = source.read(MAX_ELF_SIZE + 1)
         binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm)
-        write_package(args.output, binary, manifest)
+        write_package(args.output, binary, manifest, elf=elf)
         print(json.dumps({"status": manifest["status"], "ready_to_flash": False,
                           "output": str(args.output), "sha256": manifest["output"]["sha256"]}, indent=2))
     except (OSError, FirmwareError) as error:

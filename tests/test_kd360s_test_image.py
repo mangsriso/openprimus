@@ -326,7 +326,23 @@ class ImageTests(unittest.TestCase):
             self.assertEqual(result["experiment"]["protocol"], "WPS1")
             self.assertEqual(result["experiment"]["collector_ipv4"], "192.0.2.1")
             self.assertFalse(result["changes"]["trial_defer_confirm"]["mark_valid_added"])
-            publish.assert_called_once_with(root / "out", b"image", result)
+            publish.assert_called_once_with(root / "out", b"image", result, elf=elf_fixture())
+
+    def test_retained_elf_matches_manifest_and_upgrades_old_package_without_replacing_files(self):
+        binary, manifest = self.synthetic_build()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "package"
+            builder.write_package(output, binary, manifest)
+            before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in output.iterdir()}
+            with self.assertRaisesRegex(firmware.FirmwareError, "retained ELF differs"):
+                builder.write_package(output, binary, manifest, elf=b"wrong")
+            self.assertFalse((output / "payload.elf").exists())
+            builder.write_package(output, binary, manifest, elf=elf_fixture())
+            builder.write_package(output, binary, manifest, elf=elf_fixture())
+            self.assertEqual((output / "payload.elf").read_bytes(), elf_fixture())
+            for name, record in before.items():
+                path = output / name
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), record)
 
     def test_output_publication_is_idempotent_and_does_not_overwrite(self):
         binary, manifest = self.synthetic_build()

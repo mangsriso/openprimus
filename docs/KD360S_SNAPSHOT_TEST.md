@@ -93,9 +93,10 @@ hardware experiment.
 
 The destination must be the collector's IPv4 address, not the espresso machine's
 address. No network contact occurs during this build. The output contains
-`firmware.experimental.bin` and `manifest.json`. The manifest records the exact
+`firmware.experimental.bin`, `payload.elf`, and `manifest.json`. The manifest records the exact
 stock, payload and result hashes, destination, compiler and source hashes, and
 unresolved hardware checks. It always reports `ready_to_flash: false`.
+Use the [offline preflight](KD360S_PREFLIGHT.md) to verify these files together.
 
 The builder inserts code into segment 3, shifts segment 4 without changing its
 payload, and changes the loop-task entry pointer. It regenerates ESP checksum and
