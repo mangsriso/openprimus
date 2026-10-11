@@ -155,7 +155,7 @@ def debugger_script(elf, port):
     return '\n'.join(lines) + '\n'
 
 
-def execute(qemu, toolchain, elf, output, label):
+def execute(qemu, toolchain, elf, output, label, *, script_factory=debugger_script):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -176,7 +176,7 @@ def execute(qemu, toolchain, elf, output, label):
             else:
                 raise RuntimeError('QEMU debugger did not open')
             script = output / (label + '.gdb')
-            script.write_text(debugger_script(elf, port))
+            script.write_text(script_factory(elf, port))
             run = subprocess.run([tool(toolchain, 'gdb'), '-q', '-batch', '-x', str(script)],
                                  capture_output=True, text=True, timeout=60)
             log = run.stdout + run.stderr

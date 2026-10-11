@@ -75,9 +75,14 @@ The SDL simulator exercises a separate host bridge.
 
 The recorder payload still connects once and leaves later reconnect behavior to
 the stock SDK. It combines polling with start/stop, pressure and accepted-RX
-hooks, and stores at most 128 records in RAM. Host and isolated Xtensa tests
-cover those hooks, but their hardware coverage and latency remain unverified.
-Power loss removes that buffer.
+hooks, and stores 128 records in its fallback RAM buffer or 256..8192 when its
+optional PSRAM allocation succeeds. Idle records do not accumulate behind an
+unacknowledged record, and sixteen slots are reserved for shot boundaries.
+Eight records can be in flight with individual commit ACKs. The OTA pending
+consumer is guarded, but worker/UI serialization and manual retry are still
+unfinished. Host and isolated Xtensa tests cover the implemented paths, while
+hardware coverage, heap margin and latency remain unverified. Power loss removes
+uncommitted buffer contents.
 Passing the first boot experiment does not establish continuous every-shot
 recording. Resolving network ownership, hardware coverage, and retention
 remains required for that goal.

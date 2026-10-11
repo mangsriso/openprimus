@@ -1,6 +1,11 @@
 #include "protocol.h"
 #include "stock_runtime.h"
 #include "recorder_context.h"
+#include "retention.h"
+#include "transport.h"
+
+#define BOUNDARY_RESERVE 16u
+#define IDLE_OBSERVATION_MS 5000u
 
 struct ipv4_address {
     uint8_t length;
@@ -47,14 +52,14 @@ static void network_worker(void *argument) {
     destination.port = COLLECTOR_PORT_BE;
     destination.ip = COLLECTOR_IPV4_LE;
     int socket = -1;
-    uint32_t last_send = 0;
-    int awaiting_ack = 0;
+    struct transmit_window window;
+    zero(&window, sizeof(window));
     for (;;) {
         delay(10);
         if (wifi_status(WIFI_OBJECT) != 3) {
             if (socket >= 0) udp_close(socket);
             socket = -1;
-            awaiting_ack = 0;
+            zero(&window, sizeof(window));
             delay(250);
             continue;
         }
@@ -62,28 +67,32 @@ static void network_worker(void *argument) {
             socket = udp_socket(2, 2, 0);
             if (socket < 0) { delay(250); continue; }
         }
-        const uint8_t *packet = pending(&c->ring);
-        if (!packet) continue;
+        uint32_t count = window_count(&c->ring);
+        if (!count) continue;
         uint32_t now = millis();
-        if (!awaiting_ack || (uint32_t)(now - last_send) >= 250) {
+        for (uint32_t index = 0; index < count; ++index) {
+            if (!window_due(&window, index, now)) continue;
+            const uint8_t *packet = window_packet(&c->ring, index);
             if (udp_send(socket, packet, SNAPSHOT_BYTES, 8, &destination, 16) != SNAPSHOT_BYTES) {
                 udp_close(socket);
                 socket = -1;
-                awaiting_ack = 0;
-                delay(250);
-                continue;
+                zero(&window, sizeof(window));
+                break;
             }
-            awaiting_ack = 1;
-            last_send = now;
+            window_sent(&window, index, now);
         }
-        uint8_t ack[17];
-        struct ipv4_address sender;
-        zero(&sender, sizeof(sender));
-        uint32_t sender_size = sizeof(sender);
-        int received = udp_receive(socket, ack, sizeof(ack), 8, &sender, &sender_size);
-        if (received == 16 && sender_size == 16 && sender.family == 2
-            && sender.ip == destination.ip && sender.port == destination.port
-            && acknowledge(&c->ring, ack, 16)) awaiting_ack = 0;
+        if (socket < 0) { delay(250); continue; }
+        for (uint32_t received_count = 0; received_count < TRANSMIT_WINDOW_SIZE; ++received_count) {
+            uint8_t ack[17];
+            struct ipv4_address sender;
+            zero(&sender, sizeof(sender));
+            uint32_t sender_size = sizeof(sender);
+            int received = udp_receive(socket, ack, sizeof(ack), 8, &sender, &sender_size);
+            if (received < 0) break;
+            if (received == 16 && sender_size == 16 && sender.family == 2
+                && sender.ip == destination.ip && sender.port == destination.port)
+                window_ack(&c->ring, &window, ack, 16);
+        }
     }
 }
 static void observe(struct context *c, uint32_t now, uint32_t duration, uint32_t kind, uint32_t flags) {
@@ -119,7 +128,8 @@ static void observe(struct context *c, uint32_t now, uint32_t duration, uint32_t
         put32(packet + 92, sizeof(c->rx));
         for (unsigned i = 0; i < sizeof(c->rx); ++i) packet[96 + i] = c->rx[i];
     }
-    enqueue(&c->ring, packet);
+    put32(packet + 124, ring_capacity(&c->ring));
+    enqueue_reserved(&c->ring, packet, kind == 2 || kind == 3 ? 0 : BOUNDARY_RESERVE);
 }
 static void increment(struct context *c, uint32_t *counter) {
     if (*counter == UINT32_MAX) c->source_flags |= 32;
@@ -171,12 +181,16 @@ void snapshot_entry(void *argument) {
         int bound = RECORDER_BIND_FAILED;
         if (copy_string(c->ssid, sizeof(c->ssid), 0x3fc9ff3cu) && c->ssid[0]
             && copy_string(c->password, sizeof(c->password), 0x3fc9ff2cu)) {
+            retention_startup(&c->ring, caps_free_size, caps_largest_block, caps_allocate);
             fill_random(c->session, sizeof(c->session));
             bound = recorder_bind(c);
         }
         if (bound != RECORDER_BIND_OK || create_task(network_worker, (const char *)task_name, 4096, c, 1, 0, 0) != 1) {
             zero(c->password, sizeof(c->password));
-            if (bound == RECORDER_BIND_FAILED) release(c);
+            if (bound == RECORDER_BIND_FAILED) {
+                if (c->ring.external_records) release(c->ring.external_records);
+                release(c);
+            }
             c = 0;
         } else {
             store_release(&c->ready, 1);
@@ -189,7 +203,9 @@ void snapshot_entry(void *argument) {
         stock_loop();
         stock_serial();
         uint32_t now = millis();
-        if (c && load_acquire(&c->ready) && (uint32_t)(now - last_observation) >= 100) {
+        if (c && load_acquire(&c->ready)
+            && (uint32_t)(now - last_observation) >= (c->shot_open ? 100u : IDLE_OBSERVATION_MS)
+            && (c->shot_open || c->ring.head == load_acquire(&c->ring.tail))) {
             observe(c, now, now - start, 1, 0);
             last_observation = now;
         }

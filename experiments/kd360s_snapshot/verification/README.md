@@ -72,3 +72,31 @@ mapping, bootloader, rollback, control-loop deadlines, or hardware interrupts.
 The debugger initializes a CALL8 entry state; CALL4/CALL12 entry compatibility
 is outside this contract. Every report retains `hardware_verified: false` and
 `ready_to_flash: false`.
+
+## Execute the Wi-Fi pending consumer guard
+
+Use the same toolchain, QEMU and pinned stock inputs with `verify_wifi_guard.py`:
+
+```sh
+python3 experiments/kd360s_snapshot/verification/verify_wifi_guard.py \
+  --toolchain /path/to/xtensa-esp32s3-elf/bin \
+  --qemu /path/to/qemu-system-xtensa \
+  --stock firmware_binary/kd360s/KD360S_OTA_1.0.13_HK_20260630.bin \
+  --output /path/to/private/wifi-guard-qemu-results
+```
+
+This compiles production `wifi_guard.S` and uses the production image builder to
+install its pinned splice. QEMU starts at the original predecessor instruction
+and stops at the two original continuation addresses. Twenty-seven cases cross
+pending values 0, 1 and 255 with OTA, Wi-Fi, password, normal, DFU, null, settings,
+preferences and repeated normal-screen inputs. Null-screen cases also zero the
+three owner object globals. Checks cover continuation, live registers, stack
+pointer, register-window state, SAR, the pending byte, and preserved reason,
+connect/progress/update/restart state. The negative control changes the owned
+continuation literal and must fail the OTA nonzero case.
+
+This does not execute the complete scheduler, callback or SDK and does not
+simulate concurrent event arrival. Repeated normal inputs are repeated CPU
+cases, not an asynchronous race test. It does not prove reconnect, control-loop
+latency, packet retention or hardware behavior. Test ELFs contain private stock
+code; do not commit or flash them.

@@ -40,8 +40,17 @@ class SnapshotRuntimeTests(unittest.TestCase):
     def test_ack_sender_identity_length_and_duplicate_validation(self):
         self.run_case('ack-validation')
 
-    def test_one_outstanding_record_retries_at_250ms_including_clock_wrap(self):
+    def test_window_record_retries_at_250ms_including_clock_wrap(self):
         self.run_case('retry')
 
     def test_hook_lifecycle_repeated_acquisitions_context_and_loss(self):
         self.run_case('lifecycle')
+
+    def test_idle_does_not_fill_queue_and_stop_survives_telemetry_saturation(self):
+        self.run_case('idle-retention')
+
+    def test_external_buffer_released_only_before_context_publication(self):
+        self.run_case('retention-lifetime')
+
+    def test_window_batches_delayed_out_of_order_acks_and_partial_send_failure(self):
+        self.run_case("window-delivery")

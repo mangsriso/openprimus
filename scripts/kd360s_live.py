@@ -54,7 +54,7 @@ KINDS = {1: "observation", 2: "start", 3: "stop", 4: "pressure", 5: "accepted_rx
 V2_COLUMNS = ["protocol", "kind", "shot_id", "pressure_generation", "pressure_acquired_ms",
               "rx_generation", "rx_accepted_ms", "start_argument", "calibrated_pressure_bits",
               "calibrated_pressure", "filtered_adc_bits", "accepted_rx_hex", "boundary_anomaly",
-              "counter_saturated", "pressure_observed", "rx_observed"]
+              "counter_saturated", "pressure_observed", "rx_observed", "buffer_record_capacity"]
 
 
 class ProtocolError(ValueError):
@@ -77,8 +77,8 @@ def decode(packet):
         if flags != 1 or reserved != 0:
             raise ProtocolError("freshness-unknown flag required; other flags/reserved unsupported")
     elif ((magic, version, length) != (b"WPS2", 2, 128) or kind not in KINDS
-          or flags & ~63 or not flags & 1 or any(packet[124:])):
-        raise ProtocolError("unsupported recorder header, flags or reserved bytes")
+          or flags & ~63 or not flags & 1):
+        raise ProtocolError("unsupported recorder header or flags")
     result = {
         "session": f"{session:016x}", "seq": seq, "observation_ms": observed,
         "dropped_cumulative": dropped, "loop_duration_ms": loop_ms,
@@ -93,6 +93,9 @@ def decode(packet):
         result[name + "_bits"] = bits
         result[name] = value if math.isfinite(value) else None
     if len(packet) == 128:
+        capacity, = struct.unpack_from("<I", packet, 124)
+        if capacity and (not 128 <= capacity <= 8192 or capacity & (capacity - 1)):
+            raise ProtocolError("invalid recorder buffer capacity")
         pressure_seq, pressure_ms, rx_seq, rx_ms, start_arg, calibrated, adc, rx_size = struct.unpack_from("<8I", packet, 64)
         if (bool(flags & 2) != bool(pressure_seq) or bool(flags & 4) != bool(rx_seq)
                 or (kind == 4 and not flags & 2) or (kind == 5 and not flags & 4)):
@@ -108,6 +111,7 @@ def decode(packet):
                       filtered_adc_bits=adc, accepted_rx_hex=packet[96:96 + rx_size].hex(),
                       boundary_anomaly=bool(flags & 24), counter_saturated=bool(flags & 32),
                       pressure_observed=bool(flags & 2), rx_observed=bool(flags & 4),
+                      buffer_record_capacity=capacity or None,
                       freshness="source_hook_invocations")
     return result
 

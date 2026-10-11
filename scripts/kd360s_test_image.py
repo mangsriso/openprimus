@@ -16,6 +16,7 @@ import tempfile
 from kd360s_firmware import DEFAULT_CACHE, TARGET, FirmwareError, Target, verify_bytes
 from kd360s_instrumentation import EXPECTED_SEGMENTS, audit_bytes, mapped_bytes
 from kd360s_hooks import plan_recorder_hooks
+from kd360s_wifi_guard import plan_wifi_guard
 
 PAYLOAD_START = 0x42106EA0
 PAYLOAD_LIMIT = 0x42110000
@@ -202,12 +203,14 @@ def _seal(body: bytes) -> bytes:
 
 
 def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
-                recorder_hooks: bool = False) -> tuple[bytes, dict]:
+                recorder_hooks: bool = False, wifi_guard: bool = False) -> tuple[bytes, dict]:
     """Build only from the exact stock pin, then undo the edits and verify that pin."""
     source_audit = audit_bytes(stock)
     image = verify_bytes(stock)
     payload = parse_elf(elf)
     hooks = plan_recorder_hooks(image, payload) if recorder_hooks else None
+    guard = plan_wifi_guard(image, payload) if wifi_guard else None
+    patches = [patch for plan in (hooks, guard) if plan for patch in plan["patches"]]
     code = image.segments[3]
     insertion_offset = code.offset + code.size
     if trial_defer_confirm:
@@ -231,11 +234,10 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
     struct.pack_into("<I", body, pointer_offset, payload.entry)
     if trial_defer_confirm:
         body[_TRIAL_BYTE_OFFSET] = _TRIAL_REPLACEMENT
-    if hooks:
-        for hook in hooks["patches"]:
-            offset = hook["file_offset"]
-            replacement = bytes.fromhex(hook["after_hex"])
-            body[offset:offset + len(replacement)] = replacement
+    for patch in patches:
+        offset = patch["file_offset"]
+        replacement = bytes.fromhex(patch["after_hex"])
+        body[offset:offset + len(replacement)] = replacement
     result = _seal(bytes(body))
     result_target = Target("firmware.experimental.bin", len(result), hashlib.sha256(result).hexdigest(), 9, 5)
     rebuilt = verify_bytes(result, result_target)
@@ -250,11 +252,10 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
     restored[pointer_offset:pointer_offset + 4] = old_pointer
     if trial_defer_confirm:
         restored[_TRIAL_BYTE_OFFSET] = _TRIAL_EXPECTED[4]
-    if hooks:
-        for hook in hooks["patches"]:
-            offset = hook["file_offset"]
-            original = bytes.fromhex(hook["before_hex"])
-            restored[offset:offset + len(original)] = original
+    for patch in patches:
+        offset = patch["file_offset"]
+        original = bytes.fromhex(patch["before_hex"])
+        restored[offset:offset + len(original)] = original
     # Preserve the original checksum padding too, so the comparison covers every stock byte.
     restored.extend(stock[image.payload_end:])
     verify_bytes(bytes(restored))
@@ -304,6 +305,8 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
         }
     if hooks:
         manifest["changes"]["recorder_hooks"] = hooks
+    if guard:
+        manifest["changes"]["wifi_guard"] = guard
     return result, manifest
 
 
@@ -368,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="offline trial that suppresses early stock OTA confirmation; rollback is not guaranteed")
     parser.add_argument("--recorder-hooks", action="store_true",
                         help="install the four pinned recorder entry detours from ELF wrapper symbols")
+    parser.add_argument("--wifi-guard", action="store_true",
+                        help="install the pinned OTA disconnect pending-flag consumer guard")
     args = parser.parse_args(argv)
     try:
         if args.output.resolve() in (args.stock.resolve(), args.elf.resolve()):
@@ -377,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         with args.elf.open("rb") as source:
             elf = source.read(MAX_ELF_SIZE + 1)
         binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm,
-                                       recorder_hooks=args.recorder_hooks)
+                                       recorder_hooks=args.recorder_hooks, wifi_guard=args.wifi_guard)
         write_package(args.output, binary, manifest, elf=elf)
         print(json.dumps({"status": manifest["status"], "ready_to_flash": False,
                           "output": str(args.output), "sha256": manifest["output"]["sha256"]}, indent=2))

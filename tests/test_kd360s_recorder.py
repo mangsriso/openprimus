@@ -56,6 +56,7 @@ class RecorderTests(unittest.TestCase):
             self.assertTrue(rows[1]['pressure_observed'])
             self.assertEqual(rows[1]['calibrated_pressure'], 9.5)
             self.assertEqual(rows[1]['filtered_adc_bits'], 456)
+            self.assertTrue(all(row['buffer_record_capacity'] == 128 for row in rows))
             self.assertEqual(rows[2]['accepted_rx_hex'], bytes(range(28)).hex())
             self.assertEqual(rows[3]['pressure_generation'], 1)
             self.assertEqual(rows[3]['rx_generation'], 1)
@@ -98,6 +99,16 @@ class RecorderTests(unittest.TestCase):
         packet = bytearray(self.packets[2]); packet[64:68] = bytes(4)
         with self.assertRaisesRegex(live.ProtocolError, 'generations disagree'):
             live.record(self.connection, bytes(packet), self.sender)
+        self.assertEqual(list(live.iter_snapshots(self.connection)), [])
+
+    def test_capacity_extension_accepts_legacy_zero_and_bounded_power_of_two(self):
+        for capacity in (0, 128, 256, 512, 1024, 2048, 4096, 8192):
+            packet = bytearray(self.packets[0]); struct.pack_into('<I', packet, 124, capacity)
+            self.assertEqual(live.decode(bytes(packet))['buffer_record_capacity'], capacity or None)
+        for capacity in (1, 64, 129, 1000, 16384, 0xffffffff):
+            packet = bytearray(self.packets[0]); struct.pack_into('<I', packet, 124, capacity)
+            with self.subTest(capacity=capacity), self.assertRaises(live.ProtocolError):
+                live.record(self.connection, bytes(packet), self.sender)
         self.assertEqual(list(live.iter_snapshots(self.connection)), [])
 
     def test_v1_migration_preserves_all_raw_bytes_metadata_and_immutability(self):

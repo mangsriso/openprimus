@@ -135,16 +135,23 @@ memory. A genuine pthread key binds that context only to the loop task. Allocati
 binding or task-creation failure disables capture and continues the stock loop.
 A published or uncertain context remains allocated until reboot to avoid dangling
 pointers. Heap and stack headroom on the physical machine remain unknown.
+Before publishing that context, it attempts one bounded PSRAM allocation from
+the stock capability allocator. See the [retention policy](../KD360S_RECORDER_DESIGN.md#bounded-retention)
+for size limits and unverified memory margins.
 
 The worker calls the recovered stock `WiFi.begin` once with copies of the saved
 credentials. It erases its password copy after that call. It does not register the
 updater callback or repeatedly force a connection. Later reconnect behavior is
 owned by the stock SDK. Opening Wi-Fi settings, OTA or DFU can disconnect it;
 concurrent access to those screens is outside this first experiment.
+The new consumer guard suppresses the stock pending-error disconnect outside the
+three OTA-flow screens. It preserves the original callback and does not implement
+worker/UI serialization or autonomous retries.
 
 The loop wrapper preserves setup, conditional watchdog reset, stock loop and
 serial-event calls. It polls raw values after an iteration, with a minimum 100 ms
-between observations. Additional records come from start/stop and source hooks
+between observations while a shot is open. Idle observations require five seconds
+and an empty queue. Additional records come from start/stop and source hooks
 during a shot. Each record includes actual/target pressure and flow bits,
 raw volume, mode/state/active/stop/diagnostic fields, observation time and coarse
 loop duration. Units need physical confirmation. Millisecond loop duration is
@@ -154,18 +161,23 @@ the calibrated pressure return before the caller's clamp, ADC argument, source
 generations/timestamps, and the 28-byte accepted receive window. The pressure
 event's common control fields may still contain the preceding update.
 
-The 128-record RAM ring retains unacknowledged records and drops new observations
-when full. It reports cumulative drops and sequence gaps once records resume.
-Retention is 128 divided by the actual total event rate in records/second;
-source events shorten it compared with the old polling-only experiment.
-Records disappear on power loss. A full ring at the end
-of a session may lose observations before it can report the final drop count.
+The ring retains unacknowledged records, using 128 fallback slots or 256..8192
+slots after successful PSRAM allocation. Offset 124 of each WPS2 packet reports
+the selected capacity; update the collector before using this extension.
+Telemetry stops consuming slots when sixteen remain; start/stop packets can use
+those remaining slots. Dropped records still advance sequence and cumulative
+loss. Finite outage retention depends on the actual incoming event rate and
+available capacity. Between shots, one retained idle record prevents further idle
+accumulation. A later idle record after the queue drains reports cumulative loss.
+Records disappear on power loss; a reboot before such reporting can still hide
+the final drop count and completely unseen shots.
 The sender stops accepting records before its 32-bit sequence wraps. The session
 nonce comes from the recovered SDK random generator after stock setup.
 
 The collector acknowledges only after SQLite commit. The worker accepts only a
-matching ACK from its configured destination, then frees the slot. UDP retries
-are bounded to one outstanding record. Transient network errors do not discard
+matching ACK from its configured destination. Up to eight records can be in
+flight, each retried after 250 ms. Out-of-order ACKs are retained; slots are freed
+only as the contiguous acknowledged prefix advances. Transient network errors do not discard
 committed rows or stop the collector. Neither protocol nor ACKs are authenticated.
 See [the collector contract](KD360S_LIVE_COLLECTOR.md) for ports, storage and exports.
 

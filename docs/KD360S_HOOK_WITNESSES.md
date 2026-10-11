@@ -55,11 +55,13 @@ No nearby code cave has been approved by this audit.
 
 ## Remaining recorder requirements
 
-The current payload polls every 100 ms or later. It has no explicit lifecycle
-events and declares freshness unknown. A 128-record RAM ring cannot preserve
-all observations across long receiver outages or power loss. These remain code
-and design work, in addition to the separate hardware validation. Passing an
-inert first boot cannot make this payload a complete every-shot recorder.
+The earlier polling-only payload has been replaced by the explicit lifecycle
+and acquisition adapters below. The [recorder contract](../KD360S_RECORDER_DESIGN.md)
+describes its bounded RAM/PSRAM retention and delivery window. Continuous
+reconnect, actual source coverage, heap margin and control-loop timing still
+need verification. Power loss can erase records not committed by the collector.
+Passing an inert first boot cannot establish complete every-shot recording.
+
 ## Executable recorder adapters
 
 The direct-call range limit is now addressed by four original-entry detours.

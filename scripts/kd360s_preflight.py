@@ -61,8 +61,9 @@ def verify_package(stock: bytes, elf: bytes, binary: bytes, manifest: dict,
     if not isinstance(changes, dict):
         raise FirmwareError('manifest changes must be an object')
     recorder_hooks = 'recorder_hooks' in changes
+    wifi_guard = 'wifi_guard' in changes
     expected, expected_manifest = build_image(stock, elf, trial_defer_confirm=trial_defer_confirm,
-                                               recorder_hooks=recorder_hooks)
+                                               recorder_hooks=recorder_hooks, wifi_guard=wifi_guard)
     if binary != expected:
         raise FirmwareError('package bytes differ from the image rebuilt from stock and ELF')
     base = {key: value for key, value in manifest.items() if key != 'experiment'}
@@ -82,6 +83,7 @@ def verify_package(stock: bytes, elf: bytes, binary: bytes, manifest: dict,
         'sector_rounded_size': (len(binary) + SECTOR_SIZE - 1) // SECTOR_SIZE * SECTOR_SIZE,
         'trial_defer_confirm': trial_defer_confirm,
         'recorder_hooks': recorder_hooks,
+        'wifi_guard': wifi_guard,
         'unverified_metadata': {'experiment': experiment},
         'source_to_elf_verified': False,
         'backup_inspection': None,

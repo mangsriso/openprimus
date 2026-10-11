@@ -9,6 +9,9 @@ struct snapshot_ring {
     uint32_t sequence;
     uint32_t dropped;
     uint8_t records[SNAPSHOT_CAPACITY][SNAPSHOT_BYTES];
+    uint8_t *external_records;
+    uint32_t external_capacity;
+    uint32_t retention_initialized;
 };
 static inline uint32_t load_acquire(const uint32_t *p) {
     return __atomic_load_n(p, __ATOMIC_ACQUIRE);
@@ -26,21 +29,33 @@ static inline int bytes_equal(const uint8_t *a, const uint8_t *b, unsigned n) {
     for (unsigned i = 0; i < n; ++i) if (a[i] != b[i]) return 0;
     return 1;
 }
-static inline int enqueue(struct snapshot_ring *ring, uint8_t packet[SNAPSHOT_BYTES]) {
+static inline uint32_t ring_capacity(const struct snapshot_ring *ring) {
+    return ring->external_records ? ring->external_capacity : SNAPSHOT_CAPACITY;
+}
+static inline uint8_t *ring_slot(struct snapshot_ring *ring, uint32_t index) {
+    index &= ring_capacity(ring) - 1;
+    return ring->external_records ? ring->external_records + index * SNAPSHOT_BYTES : ring->records[index];
+}
+static inline int enqueue_reserved(struct snapshot_ring *ring, uint8_t packet[SNAPSHOT_BYTES], uint32_t reserve) {
+    uint32_t capacity = ring_capacity(ring);
+    if (reserve > capacity) return 0;
     if (ring->sequence == UINT32_MAX) return 0;
     put32(packet + 16, ring->sequence++);
-    if ((uint32_t)(ring->head - load_acquire(&ring->tail)) == SNAPSHOT_CAPACITY) {
+    if ((uint32_t)(ring->head - load_acquire(&ring->tail)) >= capacity - reserve) {
         if (ring->dropped != UINT32_MAX) ++ring->dropped;
         return 0;
     }
     put32(packet + 24, ring->dropped);
-    uint8_t *slot = ring->records[ring->head % SNAPSHOT_CAPACITY];
+    uint8_t *slot = ring_slot(ring, ring->head);
     for (unsigned i = 0; i < SNAPSHOT_BYTES; ++i) slot[i] = packet[i];
     store_release(&ring->head, ring->head + 1);
     return 1;
 }
+static inline int enqueue(struct snapshot_ring *ring, uint8_t packet[SNAPSHOT_BYTES]) {
+    return enqueue_reserved(ring, packet, 0);
+}
 static inline const uint8_t *pending(struct snapshot_ring *ring) {
-    return ring->tail == load_acquire(&ring->head) ? 0 : ring->records[ring->tail % SNAPSHOT_CAPACITY];
+    return ring->tail == load_acquire(&ring->head) ? 0 : ring_slot(ring, ring->tail);
 }
 static inline int acknowledge(struct snapshot_ring *ring, const uint8_t *ack, unsigned size) {
     const uint8_t *packet = pending(ring);
