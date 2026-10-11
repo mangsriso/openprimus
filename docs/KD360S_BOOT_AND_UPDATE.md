@@ -105,11 +105,12 @@ The standard
 [bootloader maps image segment lengths](https://github.com/espressif/esp-idf/blob/v4.4.6/components/bootloader_support/src/bootloader_utility.c#L614-L653).
 The machine's actual bootloader and successful runtime mapping remain unverified.
 
-## Network ownership remains unresolved
+## Stock network conflict and recorder ownership
 
-The snapshot worker calls station begin once. It closes and reopens UDP sockets
-when status changes, but does not initiate another station connection. Stock
-settings and update paths can explicitly disconnect.
+Stock settings and update paths can explicitly disconnect. The early snapshot
+worker called station begin only once; the current recorder adds worker retries
+through a task-scoped recursive gate. See the current
+[recorder contract](../KD360S_RECORDER_DESIGN.md) for ownership and credential rules.
 
 An additional conflict exists in the updater's event callback, `0x4201ba94`.
 At `0x4201bae8` it saves the disconnect reason at `0x3fca1515`. For a reason other
@@ -121,16 +122,18 @@ application callbacks.
 This permits an SDK reconnect attempt followed by an application disconnect.
 Callback lifetime after leaving the screen is not fully established. Checking
 only the current screen or cleared one-shot flags does not prove ownership.
-Do not add an unconditional reconnect loop until callback cleanup and ownership
-are established.
+The current recorder guards this pending-flag consumer and checks screen/service
+ownership under its gate before retrying. The native SDK event task bypasses
+the gate. This avoids making that task wait behind a recorder SDK call; it does
+not establish a bound on SDK duration or on a UI call waiting for the gate.
+Physical transition and timing tests remain required.
 
 ## Evidence still required from the machine
 
 The application file cannot establish OTA slot capacity, the active and previous
 slots, bootloader rollback, eFuse security state, or an independent recovery
-interface. For the current 3,830,512-byte snapshot image, the minimum sector-rounded
-space is `0x3a8000`, assuming 4,096-byte sectors. This is a requirement, not a
-measured partition size.
+interface. Use the exact candidate's preflight `output_size` and `sector_rounded_size` for
+its capacity requirement. These are requirements, not measured partition sizes.
 
 The WPM web DFU mode and
 [ESP32-S3 ROM USB DFU](https://docs.espressif.com/projects/esp-idf/en/v4.4.7/esp32s3/api-guides/dfu.html)

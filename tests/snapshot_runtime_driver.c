@@ -9,6 +9,7 @@
 #define KD360S_RECORDER_CONTEXT_H
 enum { RECORDER_BIND_OK = 1, RECORDER_BIND_FAILED = 0, RECORDER_BIND_RETAIN = -1 };
 static int recorder_bind(void *context);
+static int recorder_attach_existing(void *context);
 static void *recorder_context(void);
 #define COLLECTOR_IPV4_LE 0x010200c0u
 #define COLLECTOR_PORT_BE 0x25bau
@@ -27,8 +28,11 @@ static void *caps_allocate(uint32_t size, uint32_t caps);
 static void fill_random(void *memory, uint32_t size);
 static int create_task(void (*entry)(void *), const char *name, uint32_t stack,
                        void *argument, uint32_t priority, void *handle, int core);
-static int wifi_begin(void *object, const char *ssid, const char *password,
-                      int channel, const void *bssid, int connect);
+static void *wifi_current_task(void);
+static void *wifi_gate_create(uint32_t type);
+static int wifi_gate_take(void *mutex, uint32_t ticks);
+static int wifi_gate_give(void *mutex);
+static int wifi_get_mode(void);
 static int wifi_status(void *object);
 static int udp_socket(int domain, int type, int protocol);
 static int udp_close(int socket);
@@ -47,7 +51,7 @@ enum ack_kind { NO_ACK, GOOD_ACK, BAD_IP, BAD_PORT, BAD_FAMILY, BAD_ADDRESS_SIZE
 struct network_step { int connected, socket_result, send_result; enum ack_kind ack; };
 struct sent_record { uint32_t time; uint8_t bytes[SNAPSHOT_BYTES]; };
 static struct {
-    uint8_t memory[0x8000], heap[256];
+    uint8_t memory[0xd000], heap[256];
     struct context context;
     jmp_buf finished;
     uint32_t clock, loop_durations[8];
@@ -58,6 +62,10 @@ static struct {
     struct network_step steps[64]; unsigned step_count, step;
     struct sent_record sent[64]; unsigned sends;
     int begin_result;
+    unsigned task_id, worker_attached, attach_ok, inert_delays, saved_begins;
+    unsigned gate_ok, gate_fail_take, gate_depth, gate_creates, gate_token;
+    uint32_t begin_times[16];
+    int wifi_mode;
     unsigned ack_count[64], ack_source[64][8], ack_used, fail_send_number;
     uint32_t caps_free, caps_largest;
     unsigned caps_allocations, caps_releases;
@@ -66,7 +74,7 @@ static struct {
 static void call(char event) { assert(mock.call_count + 1 < sizeof(mock.calls)); mock.calls[mock.call_count++] = event; }
 static uint8_t *memory_at(uint32_t address) {
     if (address >= 0x20000000u && address < 0x20000100u) return mock.heap + (address - 0x20000000u);
-    assert(address >= 0x3fc9c000u && address < 0x3fca4000u);
+    assert(address >= 0x3fc9c000u && address < 0x3fca9000u);
     return mock.memory + (address - 0x3fc9c000u);
 }
 static uint8_t read8(uint32_t address) { return *memory_at(address); }
@@ -83,6 +91,7 @@ static void stock_serial(void) { call('R'); }
 static int watchdog_reset(void) { call('W'); return 0; }
 static uint32_t millis(void) { return mock.clock; }
 static void delay(uint32_t ms) {
+    if (ms == 1000) { ++mock.inert_delays; longjmp(mock.finished, 1); }
     assert(ms == 10 || ms == 250);
     if (ms == 10 && mock.step++ == mock.step_count) longjmp(mock.finished, 1);
     if (ms == 10) mock.ack_used = 0;
@@ -114,21 +123,49 @@ static int recorder_bind(void *context) {
     if (mock.bind_result == 1) mock.bound = 1;
     return mock.bind_result;
 }
-static void *recorder_context(void) {
-    return mock.bound && !mock.other_task ? &mock.context : NULL;
+static int recorder_attach_existing(void *context) {
+    assert(context == &mock.context && mock.task_id == 2);
+    if (!mock.bound || !mock.attach_ok) return 0;
+    mock.worker_attached = 1; return 1;
 }
+static void *recorder_context(void) {
+    return mock.bound && !mock.other_task && (mock.task_id == 1 || mock.worker_attached) ? &mock.context : NULL;
+}
+static void *wifi_current_task(void) { return (void *)(uintptr_t)mock.task_id; }
+static void *wifi_gate_create(uint32_t type) {
+    assert(type == 4); ++mock.gate_creates; return mock.gate_ok ? &mock.gate_token : NULL;
+}
+static int wifi_gate_take(void *mutex, uint32_t ticks) {
+    assert(mutex == &mock.gate_token && (ticks == 0 || ticks == UINT32_MAX));
+    if (mock.gate_fail_take) return 0;
+    ++mock.gate_depth; return 1;
+}
+static int wifi_gate_give(void *mutex) {
+    assert(mutex == &mock.gate_token && mock.gate_depth); --mock.gate_depth; return 1;
+}
+static int wifi_get_mode(void) { return mock.wifi_mode; }
+
 static int create_task(void (*entry)(void *), const char *name, uint32_t stack,
                        void *argument, uint32_t priority, void *handle, int core) {
     assert(entry == network_worker && !strcmp(name, "wpms"));
     assert(stack == 4096 && argument == &mock.context && priority == 1 && !handle && core == 0);
+    assert(mock.context.ready == 1);
     ++mock.tasks; call('C');
     return mock.task_result;
 }
-static int wifi_begin(void *object, const char *ssid, const char *password,
+int original_explicit_begin(void *object, const char *ssid, const char *password,
                       int channel, const void *bssid, int connect) {
     assert(object == WIFI_OBJECT && !strcmp(ssid, "network") && !strcmp(password, "secret"));
-    assert(channel == 0 && !bssid && connect == 1); ++mock.begins; return mock.begin_result;
+    assert(channel == 0 && !bssid && connect == 1);
+    assert(mock.begins < 16); mock.begin_times[mock.begins++] = mock.clock; return mock.begin_result;
 }
+int original_saved_begin(void *object) {
+    assert(object == WIFI_OBJECT); ++mock.saved_begins; return mock.begin_result;
+}
+int original_disconnect(void *object, int off, int erase) {
+    assert(object == WIFI_OBJECT); (void)off; (void)erase; return 1;
+}
+int original_mode(uint32_t mode) { mock.wifi_mode = (int)mode; return 1; }
 static struct network_step *step(void) { assert(mock.step > 0 && mock.step <= mock.step_count); return &mock.steps[mock.step - 1]; }
 static int wifi_status(void *object) { assert(object == WIFI_OBJECT); return step()->connected ? 3 : 0; }
 static int udp_socket(int domain, int type, int protocol) {
@@ -177,19 +214,22 @@ static void inline_string(uint32_t address, const char *value) {
 static void reset(void) {
     memset(&mock, 0, sizeof(mock)); mock.allocation_ok = 1; mock.task_result = 1; mock.bind_result = 1;
     mock.loop_limit = 1; mock.loop_durations[0] = 100;
+    mock.task_id = 1; mock.gate_ok = mock.attach_ok = 1; mock.wifi_mode = 1;
+    mock.context.wifi.producer_task = (void *)(uintptr_t)1;
+    put32(memory_at(0x3fc9d104u), 0x1234);
     inline_string(0x3fc9ff3cu, "network"); inline_string(0x3fc9ff2cu, "secret");
 }
 static void run_entry(void) { if (!setjmp(mock.finished)) snapshot_entry(NULL); }
 static void run_network(unsigned count) {
-    mock.step_count = count;
+    mock.step_count = count; mock.task_id = 2;
     if (!setjmp(mock.finished)) network_worker(&mock.context);
-    assert(mock.begins == 1 && mock.context.ready == 1);
+    assert(!mock.gate_depth);
     assert(!memcmp(mock.context.session, "\1\2\3\4\5\6\7\10", 8));
-    for (unsigned i = 0; i < sizeof(mock.context.password); ++i) assert(mock.context.password[i] == 0);
 }
 static void network_fixture(unsigned records) {
     reset(); strcpy(mock.context.ssid, "network"); strcpy(mock.context.password, "secret");
-    mock.context.ready = 1;
+    mock.context.ready = 1; mock.bound = 1;
+    mock.context.wifi.mutex = &mock.gate_token; mock.context.wifi.boot_pending = 1;
     for (unsigned i = 0; i < 64; ++i) {
         mock.steps[i] = (struct network_step){1, 7, SNAPSHOT_BYTES, NO_ACK};
         mock.ack_count[i] = 1;
@@ -258,12 +298,59 @@ static void test_observation(void) {
         assert(get32(first + 56) == 1 && get32(first + 60) == 0);
     }
 }
-static void test_begin_once(void) {
+static void test_begin_retry(void) {
     network_fixture(2); mock.begin_result = 4;
     for (unsigned i = 0; i < 8; ++i) mock.steps[i].connected = 0;
     run_network(8);
     assert(!mock.sockets && !mock.sends && mock.context.ring.head == 2 && !mock.context.ring.tail);
-    assert(mock.clock == 8 * 260);
+    assert(mock.clock == 8 * 260 && mock.begins == 1 && !mock.saved_begins);
+    assert(!strcmp(mock.context.password, "secret") && mock.context.wifi.boot_pending);
+    network_fixture(1);
+    for (unsigned i = 0; i < 40; ++i) mock.steps[i].connected = 0;
+    run_network(40);
+    assert(mock.begins == 2 && mock.begin_times[0] == 10 && mock.begin_times[1] == 10150);
+}
+static void test_wifi_ownership(void) {
+    const uint32_t flags[] = {0x3fc9ca94u, 0x3fc9ca9du, 0x3fc9ca9fu, 0x3fc9caa0u, 0x3fc9caa1u};
+    const uint32_t screens[] = {0x3fca8564u, 0x3fca84ccu, 0x3fca849cu, 0x3fca8060u, 0x3fca85bcu, 0x3fca86d0u};
+    for (unsigned i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i) {
+        network_fixture(1); mock.steps[0].connected = 0; *memory_at(flags[i]) = 1;
+        run_network(1); assert(!mock.begins && !mock.context.wifi.attempted && !mock.saved_begins);
+    }
+    for (unsigned i = 0; i < sizeof(screens) / sizeof(screens[0]); ++i) {
+        network_fixture(1); mock.steps[0].connected = 0; put32(memory_at(screens[i]), 0x1234);
+        run_network(1); assert(!mock.begins && !mock.context.wifi.attempted);
+    }
+    for (unsigned mode = 2; mode <= 3; ++mode) {
+        network_fixture(1); mock.steps[0].connected = 0; mock.wifi_mode = mode;
+        run_network(1); assert(!mock.begins && !mock.context.wifi.attempted);
+    }
+    network_fixture(1); mock.steps[0].connected = 0; put32(memory_at(0x3fc9d104u), 0);
+    run_network(1); assert(!mock.begins && !mock.context.wifi.attempted);
+    network_fixture(1); mock.steps[0].connected = 0; mock.gate_fail_take = 1;
+    run_network(1); assert(!mock.begins && !mock.context.wifi.attempted);
+    network_fixture(1); mock.steps[0].connected = 0;
+    assert(wrap_wifi_saved(WIFI_OBJECT) == mock.begin_result);
+    assert(!mock.context.wifi.boot_pending); run_network(1);
+    assert(mock.saved_begins == 2 && !mock.begins && mock.context.password[0] == 0);
+    network_fixture(1); run_network(1);
+    assert(!mock.begins && !mock.saved_begins && !mock.context.wifi.boot_pending && !mock.context.password[0]);
+}
+static void test_worker_attachment(void) {
+    reset(); mock.gate_ok = 0; run_entry();
+    assert(mock.bound && mock.gate_creates == 1 && !mock.context.ready && !mock.tasks && !mock.releases);
+    assert(!strcmp(mock.calls, "SALR"));
+    recorder_after(2, 0, 0); assert(!mock.context.ring.head);
+    network_fixture(1); mock.attach_ok = 0; run_network(1);
+    assert(!mock.context.ready && mock.inert_delays == 1 && !mock.worker_attached);
+    assert(!mock.begins && !mock.saved_begins && !mock.sockets && !mock.sends);
+    mock.task_id = 1; recorder_after(2, 0, 0); assert(mock.context.ring.head == 1);
+    network_fixture(1); run_network(1); assert(mock.worker_attached);
+    uint32_t before = mock.context.ring.head;
+    recorder_after(2, 7, 0); recorder_after(4, 123, 456); recorder_after(5, 0, 0); recorder_after(3, 0, 0);
+    assert(mock.context.ring.head == before && !mock.context.shot_id && !mock.context.pressure_generation);
+    mock.task_id = 1; recorder_after(2, 7, 0);
+    assert(mock.context.ring.head == before + 1 && mock.context.shot_id == 1);
 }
 static void test_reconnect(void) {
     network_fixture(2); mock.steps[1].connected = 0; mock.steps[2].socket_result = -1;
@@ -423,7 +510,9 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "strings")) test_strings();
     else if (!strcmp(argv[1], "fallback")) test_fallback();
     else if (!strcmp(argv[1], "observation")) test_observation();
-    else if (!strcmp(argv[1], "begin-once")) test_begin_once();
+    else if (!strcmp(argv[1], "begin-retry")) test_begin_retry();
+    else if (!strcmp(argv[1], "wifi-ownership")) test_wifi_ownership();
+    else if (!strcmp(argv[1], "worker-attachment")) test_worker_attachment();
     else if (!strcmp(argv[1], "reconnect")) test_reconnect();
     else if (!strcmp(argv[1], "ack-validation")) test_ack_validation();
     else if (!strcmp(argv[1], "retry")) test_retry();

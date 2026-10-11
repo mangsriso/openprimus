@@ -37,3 +37,8 @@ class RecorderContextTests(unittest.TestCase):
 
     def test_lookup_during_other_task_key_creation_and_deletion(self):
         self.run_case('concurrency')
+    def test_worker_attaches_existing_key_without_rebinding_or_replacing_values(self):
+        self.run_case('attachment')
+
+    def test_producer_and_attached_worker_share_one_key_with_separate_task_values(self):
+        self.run_case('attachment-concurrency')

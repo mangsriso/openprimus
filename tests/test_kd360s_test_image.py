@@ -303,7 +303,7 @@ class ImageTests(unittest.TestCase):
                         patch.object(builder, "write_package"), patch("sys.stdout", io.StringIO()):
                     self.assertEqual(builder.main(["--stock", str(stock), "--elf", str(elf),
                                                    "--output", str(root / "result")] + flag), 0)
-                build.assert_called_once_with(b"stock", b"elf", trial_defer_confirm=enabled, recorder_hooks=False, wifi_guard=False)
+                build.assert_called_once_with(b"stock", b"elf", trial_defer_confirm=enabled, recorder_hooks=False, wifi_guard=False, wifi_hooks=False)
                 with patch.object(snapshot, "build", return_value=manifest) as build, patch("sys.stdout", io.StringIO()):
                     self.assertEqual(snapshot.main(["--stock", str(stock), "--toolchain", str(root),
                                                     "--collector-ip", "192.0.2.1", "--output", str(root / "result")] + flag), 0)
@@ -323,7 +323,7 @@ class ImageTests(unittest.TestCase):
                     patch.object(snapshot, "build_image", return_value=(b"image", manifest)) as build, \
                     patch.object(snapshot, "write_package") as publish:
                 result = snapshot.build(root, stock, "192.0.2.1", 47653, root / "out", trial_defer_confirm=True)
-            build.assert_called_once_with(b"stock", elf_fixture(), trial_defer_confirm=True, recorder_hooks=True, wifi_guard=True)
+            build.assert_called_once_with(b"stock", elf_fixture(), trial_defer_confirm=True, recorder_hooks=True, wifi_guard=True, wifi_hooks=True)
             self.assertEqual(result["experiment"]["protocol"], "WPS2")
             self.assertEqual(result["experiment"]["collector_ipv4"], "192.0.2.1")
             self.assertFalse(result["changes"]["trial_defer_confirm"]["mark_valid_added"])

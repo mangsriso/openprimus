@@ -46,7 +46,7 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
     directory = ROOT / 'experiments/kd360s_snapshot'
     with tempfile.TemporaryDirectory(prefix='kd360s-snapshot-') as temporary:
         elf = Path(temporary) / 'snapshot.elf'
-        command = [str(compiler), '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-mlongcalls',
+        command = [str(compiler), '-std=c11', '-DWIFI_HOOKS=1', '-Os', '-Wall', '-Wextra', '-Werror', '-mlongcalls',
                    '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-fno-optimize-sibling-calls',
                    '-fno-ipa-icf',
                    '-nostdlib', '-Wl,--abi-windowed', '-Wl,--build-id=none',
@@ -54,14 +54,14 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
                    '-DCOLLECTOR_IPV4_LE=' + hex(int.from_bytes(address.packed, 'little')) + 'u',
                    '-DCOLLECTOR_PORT_BE=' + hex(int.from_bytes(port.to_bytes(2, 'big'), 'little')) + 'u',
                    str(directory / 'snapshot.c'), str(directory / 'hooks.S'),
-                   str(directory / 'wifi_guard.S'), '-o', str(elf)]
+                   str(directory / 'wifi_guard.S'), str(directory / 'wifi_hooks.S'), '-o', str(elf)]
         subprocess.run(command, check=True, cwd=temporary)
         with stock.open('rb') as stream:
             original = stream.read(TARGET.size + 1)
         elf_bytes = elf.read_bytes()
         verify_marker(elf_bytes)
         binary, manifest = build_image(original, elf_bytes, trial_defer_confirm=trial_defer_confirm,
-                                       recorder_hooks=True, wifi_guard=True)
+                                       recorder_hooks=True, wifi_guard=True, wifi_hooks=True)
         manifest['experiment'] = {
             'name': 'lifecycle_recorder_v2', 'collector_ipv4': str(address), 'collector_port': port,
             'compiler': version, 'protocol': 'WPS2', 'observation_interval_min_ms': 100,
@@ -71,10 +71,13 @@ def build(toolchain, stock, collector, port, output, *, trial_defer_confirm=Fals
             'idle_observation_interval_min_ms': 5000, 'idle_queue_empty_only': True,
             'power_loss_retention': False,
             'freshness': 'hook_invocations_with_source_generation_and_time',
-            'every_shot_verified': False, 'wifi_policy': 'begin_once_after_setup_with_ota_pending_consumer_guard',
+            'every_shot_verified': False, 'wifi_policy': 'task_scoped_recursive_gate_with_owner_checked_worker_retry',
+            'retry_interval_min_ms': 10000, 'native_sdk_tasks_bypass_gate': True,
+            'UIwait_latency_bounded': False,
             'sources': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                         for name in ('snapshot.c', 'stock_runtime.h', 'protocol.h', 'snapshot.ld',
-                                     'hooks.S', 'wifi_guard.S', 'recorder_context.h', 'retention.h', 'transport.h')},
+                                     'hooks.S', 'wifi_guard.S', 'wifi_hooks.S', 'wifi_gate.h', 'recorder_context.h',
+                                     'retention.h', 'transport.h')},
         }
         write_package(output, binary, manifest, elf=elf_bytes)
         return manifest

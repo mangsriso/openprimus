@@ -15,7 +15,7 @@ static struct values *tasks[2];
 static _Thread_local int current_task, lock_held;
 static unsigned allocation, fail_allocation, creates, deletes;
 static int fail_enter, fail_clear, fail_delete, wrong_readback, unexpected_value;
-static int stored, context_value, other_value;
+static int stored, context_value, other_value, set_error_after_write, redirect_set;
 static void other_marker(void *p) { (void)p; }
 static void *allocate(size_t n) {
     if (++allocation == fail_allocation) return NULL;
@@ -87,9 +87,9 @@ static int recorder_rt_set(uint32_t key, const void *pointer) {
         if (!*p) return 12;
         (*p)->key = key;
     }
-    if (*p) (*p)->pointer = pointer;
+    if (*p) (*p)->pointer = pointer && redirect_set ? &other_value : pointer;
     if (pointer) stored = 1;
-    return 0;
+    return pointer && set_error_after_write ? 1 : 0;
 }
 static void cleanup(void) {
     while (registry) { struct recorder_key_node *p = registry; registry = p->next; free(p); }
@@ -100,7 +100,7 @@ static void cleanup(void) {
     }
     allocation = fail_allocation = creates = deletes = 0;
     fail_enter = fail_clear = fail_delete = wrong_readback = unexpected_value = stored = 0;
-    current_task = 0;
+    current_task = 0; set_error_after_write = redirect_set = 0;
 }
 static void isolation(void) {
     assert(recorder_context() == NULL);
@@ -170,6 +170,50 @@ static void registry_cases(void) {
     assert(recorder_rt_delete(duplicate) == 0);
     assert(recorder_context() == &context_value);
 }
+static void attachment(void) {
+    assert(!recorder_attach_existing(NULL));
+    assert(!recorder_attach_existing(&context_value) && !creates && !deletes);
+    assert(recorder_bind(&context_value) == RECORDER_BIND_OK);
+    unsigned before_creates = creates, before_deletes = deletes;
+    current_task = 1;
+    assert(recorder_context() == NULL);
+    assert(recorder_attach_existing(&context_value));
+    unsigned before_allocation = allocation;
+    assert(recorder_attach_existing(&context_value));
+    assert(allocation == before_allocation);
+    assert(!recorder_attach_existing(&other_value));
+    assert(recorder_context() == &context_value);
+    assert(creates == before_creates && deletes == before_deletes);
+    current_task = 0; assert(recorder_context() == &context_value);
+    cleanup();
+    for (unsigned offset = 1; offset <= 2; ++offset) {
+        assert(recorder_bind(&context_value) == RECORDER_BIND_OK);
+        current_task = 1; fail_allocation = allocation + offset;
+        assert(!recorder_attach_existing(&context_value));
+        assert(recorder_context() == NULL && creates == 1 && deletes == 0);
+        current_task = 0; assert(recorder_context() == &context_value); cleanup();
+    }
+    assert(recorder_bind(&context_value) == RECORDER_BIND_OK);
+    current_task = 1; set_error_after_write = 1;
+    assert(!recorder_attach_existing(&context_value));
+    assert(recorder_context() == NULL && !deletes && creates == 1);
+    fail_clear = 1;
+    assert(!recorder_attach_existing(&context_value));
+    assert(recorder_context() == &context_value && !deletes && creates == 1);
+    current_task = 0; assert(recorder_context() == &context_value);
+    cleanup();
+    assert(recorder_bind(&context_value) == RECORDER_BIND_OK);
+    current_task = 1; unexpected_value = 1;
+    before_allocation = allocation;
+    assert(!recorder_attach_existing(&context_value));
+    assert(allocation == before_allocation && !deletes && creates == 1);
+    unexpected_value = 0; redirect_set = 1;
+    assert(!recorder_attach_existing(&context_value));
+    assert(recorder_context() == &other_value && !deletes && creates == 1);
+    redirect_set = 0; fail_enter = 1;
+    assert(!recorder_attach_existing(&context_value));
+    fail_enter = 0; assert(recorder_context() == &other_value);
+}
 static void *mutate_keys(void *unused) {
     (void)unused;
     current_task = 1;
@@ -189,12 +233,27 @@ static void concurrency(void) {
     assert(pthread_join(thread, NULL) == 0);
     assert(recorder_context() == &context_value);
 }
+static void *attached_worker(void *unused) {
+    (void)unused; current_task = 1;
+    assert(recorder_attach_existing(&context_value));
+    for (unsigned i = 0; i < 20000; ++i) assert(recorder_context() == &context_value);
+    return NULL;
+}
+static void attachment_concurrency(void) {
+    assert(recorder_bind(&context_value) == RECORDER_BIND_OK);
+    pthread_t worker; assert(!pthread_create(&worker, NULL, attached_worker, NULL));
+    for (unsigned i = 0; i < 20000; ++i) assert(recorder_context() == &context_value);
+    assert(!pthread_join(worker, NULL));
+    assert(creates == 1 && deletes == 0);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     if (!strcmp(argv[1], "isolation")) isolation();
     else if (!strcmp(argv[1], "failures")) failures();
     else if (!strcmp(argv[1], "rollback")) rollback();
     else if (!strcmp(argv[1], "registry")) registry_cases();
+    else if (!strcmp(argv[1], "attachment-concurrency")) attachment_concurrency();
+    else if (!strcmp(argv[1], "attachment")) attachment();
     else if (!strcmp(argv[1], "concurrency")) concurrency();
     else abort();
     cleanup();

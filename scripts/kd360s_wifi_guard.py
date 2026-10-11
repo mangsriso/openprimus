@@ -39,12 +39,24 @@ CALLBACK_SIZE = 153
 CALLBACK_SHA256 = "49b9765fe4343e84ed8843f2a2d144f3dbb374fea7ba38a62f43b676f91558a7"
 
 
-def plan_wifi_guard(image: VerifiedImage, payload: Payload) -> dict:
+GUARD_HOOKS_BLOCK = bytes.fromhex(
+    "04d1c93f6485ca3fcc84ca3f9c84ca3f60cac93fe1d301423dd40142c020"
+    "0032040030307421faff16c30281f5ff82280016a80191f4ff9229009718"
+    "2091f2ff92290097181791f1ff92290097180e32a000324400c0200081f0"
+    "ffa008000c030c0cbd0c81ecffa00800")
+
+
+def plan_wifi_guard(image: VerifiedImage, payload: Payload, *, wifi_hook_plan: dict | None = None) -> dict:
+    # The caller supplies only the independently validated fixed Wi-Fi hook plan.
+    coupled = wifi_hook_plan is not None
+    expected = EXPECTED + bytes.fromhex("0c030c0cbd0c") if coupled else EXPECTED
+    block = GUARD_HOOKS_BLOCK if coupled else GUARD_BLOCK
+    function_bytes = FUNCTION_BYTES + 6 if coupled else FUNCTION_BYTES
     code = image.segments[3]
-    if not code.address <= ADDRESS < ADDRESS + len(EXPECTED) <= code.address + code.size:
+    if not code.address <= ADDRESS < ADDRESS + len(expected) <= code.address + code.size:
         raise FirmwareError("Wi-Fi guard splice lies outside stock IROM")
-    offset, actual = mapped_bytes(image, ADDRESS, len(EXPECTED))
-    if actual != EXPECTED:
+    offset, actual = mapped_bytes(image, ADDRESS, len(expected))
+    if actual != expected:
         raise FirmwareError("Wi-Fi guard stock span differs")
     witnesses = []
     for name, address, expected in WITNESSES:
@@ -63,16 +75,19 @@ def plan_wifi_guard(image: VerifiedImage, payload: Payload) -> dict:
     text = next((section for section in payload.sections if section.name == ".text"), None)
     start = symbol.address - LITERAL_BYTES
     if (symbol.info != 0x12 or symbol.section_name != ".text"
-            or symbol.size != FUNCTION_BYTES or symbol.address % 4 or text is None
+            or symbol.size != function_bytes or symbol.address % 4 or text is None
             or not text.address <= start < symbol.address + symbol.size <= text.address + len(text.data)):
         raise FirmwareError("Wi-Fi guard must be a bounded global text function with its literal block")
     position = start - text.address
-    if text.data[position:position + len(GUARD_BLOCK)] != GUARD_BLOCK:
+    if text.data[position:position + len(block)] != block:
         raise FirmwareError("Wi-Fi guard instructions/literals differ from the reviewed interior splice")
     replacement = (bytes.fromhex("06010000") + struct.pack("<I", symbol.address)
                    + bytes.fromhex("91ffffa0090000"))
+    if coupled:
+        mode = next(patch for patch in wifi_hook_plan['patches'] if patch['name'] == 'mode')
+        replacement += b'\x00' + struct.pack('<I', int(mode['wrapper_address'], 16)) + b'\x00'
     return {
-        "scheme": "kd360s_1.0.13_hk_pending_consumer_v1",
+        "scheme": "kd360s_1.0.13_hk_pending_consumer_v2" if coupled else "kd360s_1.0.13_hk_pending_consumer_v1",
         "patches": [{"address": f"0x{ADDRESS:08x}", "file_offset": offset,
                      "before_hex": actual.hex(), "after_hex": replacement.hex(),
                      "guard_symbol": SYMBOL, "guard_address": f"0x{symbol.address:08x}"}],
@@ -80,7 +95,7 @@ def plan_wifi_guard(image: VerifiedImage, payload: Payload) -> dict:
         "preserved_callback": {"address": f"0x{CALLBACK_ADDRESS:08x}",
                                "file_offset": callback_offset, "size": CALLBACK_SIZE,
                                "sha256": CALLBACK_SHA256},
-        "guard_block_sha256": hashlib.sha256(GUARD_BLOCK).hexdigest(),
-        "continuations": ["0x4201d3db", "0x4201d43d"],
+        "guard_block_sha256": hashlib.sha256(block).hexdigest(),
+        "continuations": ["0x4201d3e1" if coupled else "0x4201d3db", "0x4201d43d"],
         "scratch": ["a8", "a9"], "runtime_verified": False,
     }

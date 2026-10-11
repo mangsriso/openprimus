@@ -100,3 +100,31 @@ simulate concurrent event arrival. Repeated normal inputs are repeated CPU
 cases, not an asynchronous race test. It does not prove reconnect, control-loop
 latency, packet retention or hardware behavior. Test ELFs contain private stock
 code; do not commit or flash them.
+
+Add `--wifi-hooks` to test the coupled 21-byte consumer variant used by the
+reconnect recorder. This compiles `wifi_guard.S` with `WIFI_HOOKS=1`, links the
+production original-call trampolines and forwarding C wrapper fixtures, and
+packages all four Wi-Fi entry detours through the production builder. The owned
+consumer path replays the additional three stock instructions and stops at
+`0x4201d3e1`; its a3/a11/a12 values must be zero. Other paths preserve those
+registers as before. The mode wrapper pointer occupies the owned consumer
+literal at `0x4201d3dc`, allowing an eight-byte mode detour that preserves the
+shared stock return instructions. This consumer test does not execute those
+Wi-Fi detours or the production recursive gate C implementation.
+
+
+## Execute the production C Wi-Fi gate wrappers
+
+Run `verify_wifi_gate.py` with the same `--toolchain`, `--qemu`, `--stock` and
+`--output` arguments. It compiles production `wifi_gate.h` with production flags
+and enters its wrappers through stock-address detours. Eleven cases check six
+explicit-begin arguments, scalar returns, producer credential invalidation,
+native-task bypass, failed gate acquisition and recursive mode calls. Deep
+CALL8 chains force actual register-window spills; the negative control corrupts
+the entry scratch register and must fail an argument assertion.
+
+The original APIs are separate noinline C mocks. This proves the compiled
+header's wrapper ABI in this fixture, not byte equivalence with the final
+snapshot ELF. Original-call trampolines and selected stock continuations have
+separate proofs; the complete SDK, scheduler and physical machine are outside
+this test. Generated ELFs contain stock code and must remain private.

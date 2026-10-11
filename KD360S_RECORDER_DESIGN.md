@@ -31,12 +31,18 @@ It does not permit arbitrary patches. The retained ELF is the preflight oracle.
 A genuine pthread key stores the heap context in the replacement loop task.
 Hooks find that key through its unique destructor address under the stock key
 registry lock, release the lock, then call pthread_getspecific. Existing TLS
-slot 0 belongs to pthread and is never overwritten directly. Hooks in other
-tasks or before binding return no context. The sender receives the context as
-its task argument. The context and key remain allocated until reboot.
+slot 0 belongs to pthread and is never overwritten directly. The sender attaches
+the same context to the existing key in its own task, without creating or deleting
+a key or replacing another value. Other native tasks and calls before binding
+have no context. Lifecycle hooks also check the immutable producer task handle,
+so an attached worker cannot become a second ring producer. The context and key
+remain allocated until reboot.
 
 Binding returns success, failure with safe release, or cleanup anomaly requiring
-retention. Only success starts recording. Stock setup/loop continue on failure.
+retention. Only successful binding and recursive-mutex creation start the worker.
+Ready is published before task creation, then cleared on task creation or worker
+attachment failure; no later startup write can overwrite an attachment failure.
+An attachment-failed worker remains inert. Stock setup/loop continue on failure.
 Private registry layout, lock latency and stack/heap headroom are firmware and
 hardware verification obligations.
 
@@ -95,23 +101,46 @@ The eight-record window improves that constraint without claiming measured RF
 or durable-storage throughput. Actual production and delivery rates remain a
 hardware/collector acceptance test.
 
-The pinned scheduler's pending-disconnect consumer has a 15-byte interior splice.
+The pinned scheduler's pending-disconnect consumer has a 21-byte interior splice
+when the Wi-Fi API gates are installed (the earlier consumer-only variant remains
+15 bytes).
 It keeps the stock path only when the active screen is nonzero and matches OTA,
 Wi-Fi selection or password entry. Otherwise it clears the pending byte and
 continues on the stock zero-flag path. Original callback code and its logging,
 reason byte, restart/update branches and connection requests remain unchanged.
-The patcher verifies all 100 bytes of guard instructions/literals plus stock
-span, predecessor, referenced literals and callback digest. QEMU executes the
-actual splice to both stock continuations, with live-register checks and a
-deliberately incorrect continuation as a negative control.
+The extended consumer span owns a reachable literal for the eight-byte mode-entry
+detour. It replays three extra stock instructions only on the owned error path,
+then resumes at 0x4201d3e1. The mode detour preserves shared return instructions at
+0x42054f93/95. A proposed fifteen-byte mode detour was rejected because later stock
+branches still target those instructions. The patcher validates complete guard
+and trampoline bytes, stock spans, predecessors, referenced literals and callback
+digest. Gate installation requires the extended consumer variant; old packages
+retain their original fixed reconstruction plan.
 
-The current worker still calls `WiFi.begin` once; subsequent SDK-native reconnect
-does not guarantee recovery from every failure. The consumer guard is not a
-complete ownership protocol. Autonomous retries require worker/UI serialization:
-stock SDK commands can wait on an unbounded semaphore, so adding `begin` to the
-control loop is rejected. The proposed task-scoped recursive gate and its four
-API trampolines are under separate verification. They are not installed by this
-unit. A late event after re-entering OTA can still be attributed to that screen.
+The worker attempts initial connection or reconnection at least ten seconds apart,
+using a zero-wait claim on the recursive mutex. After claiming it, it checks the
+current screen, stock pending-work flags, persistent DFU service and AP mode.
+OTA, Wi-Fi selection, password, Settings, Preferences, DFU, a missing active screen
+or AP service prevent automatic attempts. The normal control loop does not call
+an automatic Wi-Fi operation or wait on this gate.
+
+Attached explicit begin, saved begin, disconnect and mode calls hold the same
+recursive mutex around the original function. Nested operations do not reevaluate
+screen ownership mid-call. Producer explicit/saved begin, and disconnect with off
+or erase requested, invalidate the worker's boot credential copy before entering
+stock. Failed initial connection attempts can reuse that copy; after connection
+success or a saved-config retry the worker erases its copied password. Subsequent
+retries use current SDK configuration.
+
+The gate serializes the attached producer and worker. Native SDK/event tasks have
+no recorder context and bypass it, preserving their original SDK behavior and
+avoiding a new wait on this mutex in that event path. This is not global SDK
+serialization. A user-initiated network UI call can wait behind an already admitted
+worker SDK call, whose completion has no proven time bound. Recursive priority
+inheritance does not bound that SDK wait. Do not claim unchanged control latency
+while entering network UI during brewing; physical timing remains an acceptance
+gate. A late disconnect event after re-entering OTA can still be attributed to
+that screen because stock events have no generation tag.
 
 ## Bounded retention
 

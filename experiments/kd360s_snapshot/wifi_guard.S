@@ -8,7 +8,11 @@
 .Lwifi: .long 0x3fca84cc
 .Lpassword: .long 0x3fca849c
 .Lflags: .long 0x3fc9ca60
+#ifdef WIFI_HOOKS
+.Lyes: .long 0x4201d3e1
+#else
 .Lyes: .long 0x4201d3db
+#endif
 .Lno: .long 0x4201d43d
 .global wifi_pending_guard
 .type wifi_pending_guard,@function
@@ -38,6 +42,11 @@ wifi_pending_guard:
  l32r a8,.Lno
  jx a8
 .Lowned:
+#ifdef WIFI_HOOKS
+ movi.n a3,0
+ movi.n a12,0
+ mov.n a11,a12
+#endif
  l32r a8,.Lyes
  jx a8
 .size wifi_pending_guard,.-wifi_pending_guard

@@ -131,22 +131,27 @@ with the real collector address before considering a hardware experiment.
 After stock setup, it allocates a context containing a 16,384-byte record array,
 ring/state metadata and credential copies, and creates a worker with a
 4,096-byte requested stack. SDK task metadata and networking consume additional
-memory. A genuine pthread key binds that context only to the loop task. Allocation,
-binding or task-creation failure disables capture and continues the stock loop.
+memory. A genuine pthread key binds the context to the loop task; the worker
+attaches the same context to that existing key. Only the producer task can record
+events. Allocation, binding, mutex/task creation or worker attachment failure
+disables capture and continues the stock loop.
 A published or uncertain context remains allocated until reboot to avoid dangling
 pointers. Heap and stack headroom on the physical machine remain unknown.
 Before publishing that context, it attempts one bounded PSRAM allocation from
 the stock capability allocator. See the [retention policy](../KD360S_RECORDER_DESIGN.md#bounded-retention)
 for size limits and unverified memory margins.
 
-The worker calls the recovered stock `WiFi.begin` once with copies of the saved
-credentials. It erases its password copy after that call. It does not register the
-updater callback or repeatedly force a connection. Later reconnect behavior is
-owned by the stock SDK. Opening Wi-Fi settings, OTA or DFU can disconnect it;
-concurrent access to those screens is outside this first experiment.
-The new consumer guard suppresses the stock pending-error disconnect outside the
-three OTA-flow screens. It preserves the original callback and does not implement
-worker/UI serialization or autonomous retries.
+The worker attempts connection/reconnection at least ten seconds apart when the
+screen, pending stock work, DFU service and AP mode permit. A recursive gate orders
+its calls with network calls from the bound loop task. UI configuration changes
+invalidate boot-time credentials before they can be replayed; successful connection
+or a saved-config retry permits erasing the password copy. Unattached native SDK
+tasks retain their own reconnect behavior. The consumer guard suppresses pending
+OTA-error disconnects outside the three OTA-flow screens while preserving the
+original callback. See the [ownership contract](../KD360S_RECORDER_DESIGN.md#delivery-and-wi-fi-ownership)
+for its scope. User-initiated network UI calls may wait behind a worker SDK call;
+avoid those screens during the first supervised brewing experiment until their
+physical latency has been measured.
 
 The loop wrapper preserves setup, conditional watchdog reset, stock loop and
 serial-event calls. It polls raw values after an iteration, with a minimum 100 ms
@@ -203,5 +208,7 @@ Once those prerequisites are established:
    coverage and control-task timing verification.
 
 Complete every-shot capture still needs hardware validation of the source and
-lifecycle hooks, tested reconnect ownership across screens, and a longer-retention design
-for receiver outages. A sleeping laptop exceeds this experiment's small RAM buffer.
+lifecycle hooks and tested reconnect ownership across screens. Retention remains
+finite and volatile, even with the optional PSRAM buffer. A sleeping collector
+can outlast that buffer; record its available capacity and the observed loss
+counters during outage tests.

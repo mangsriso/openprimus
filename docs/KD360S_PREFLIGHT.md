@@ -78,7 +78,8 @@ Follow [deployment preparation](KD360S_DEPLOYMENT_PREPARATION.md). Establish
 independent recovery and actual image acceptance before the inert entry-probe
 trial. Keep the first boot separate from networking and brewing tests.
 
-For complete recording, follow the remaining
-[lifecycle hook work](KD360S_HOOK_WITNESSES.md) and
-[network ownership findings](KD360S_BOOT_AND_UPDATE.md#network-ownership-remains-unresolved).
-The current snapshot remains a short-buffer experiment with unknown freshness.
+For complete recording, use the [recorder contract](../KD360S_RECORDER_DESIGN.md)
+and [lifecycle evidence](KD360S_HOOK_WITNESSES.md). The payload now records explicit
+boundaries and source generations, uses bounded RAM/PSRAM retention and retries
+from a worker under the task-scoped network gate. These changes still require
+physical source-coverage, memory, network-transition and timing validation.

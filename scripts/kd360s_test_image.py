@@ -17,6 +17,7 @@ from kd360s_firmware import DEFAULT_CACHE, TARGET, FirmwareError, Target, verify
 from kd360s_instrumentation import EXPECTED_SEGMENTS, audit_bytes, mapped_bytes
 from kd360s_hooks import plan_recorder_hooks
 from kd360s_wifi_guard import plan_wifi_guard
+from kd360s_wifi_hooks import plan_wifi_hooks
 
 PAYLOAD_START = 0x42106EA0
 PAYLOAD_LIMIT = 0x42110000
@@ -203,14 +204,18 @@ def _seal(body: bytes) -> bytes:
 
 
 def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
-                recorder_hooks: bool = False, wifi_guard: bool = False) -> tuple[bytes, dict]:
+                recorder_hooks: bool = False, wifi_guard: bool = False,
+                wifi_hooks: bool = False) -> tuple[bytes, dict]:
     """Build only from the exact stock pin, then undo the edits and verify that pin."""
     source_audit = audit_bytes(stock)
     image = verify_bytes(stock)
     payload = parse_elf(elf)
     hooks = plan_recorder_hooks(image, payload) if recorder_hooks else None
-    guard = plan_wifi_guard(image, payload) if wifi_guard else None
-    patches = [patch for plan in (hooks, guard) if plan for patch in plan["patches"]]
+    if wifi_hooks and not wifi_guard:
+        raise FirmwareError("Wi-Fi hooks require their coupled pending-consumer guard")
+    wifi_hook_plan = plan_wifi_hooks(image, payload) if wifi_hooks else None
+    guard = plan_wifi_guard(image, payload, wifi_hook_plan=wifi_hook_plan) if wifi_guard else None
+    patches = [patch for plan in (hooks, guard, wifi_hook_plan) if plan for patch in plan["patches"]]
     code = image.segments[3]
     insertion_offset = code.offset + code.size
     if trial_defer_confirm:
@@ -307,6 +312,8 @@ def build_image(stock: bytes, elf: bytes, *, trial_defer_confirm: bool = False,
         manifest["changes"]["recorder_hooks"] = hooks
     if guard:
         manifest["changes"]["wifi_guard"] = guard
+    if wifi_hook_plan:
+        manifest["changes"]["wifi_hooks"] = wifi_hook_plan
     return result, manifest
 
 
@@ -373,6 +380,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="install the four pinned recorder entry detours from ELF wrapper symbols")
     parser.add_argument("--wifi-guard", action="store_true",
                         help="install the pinned OTA disconnect pending-flag consumer guard")
+    parser.add_argument("--wifi-hooks", action="store_true",
+                        help="install the four pinned Wi-Fi API detours and original trampolines")
     args = parser.parse_args(argv)
     try:
         if args.output.resolve() in (args.stock.resolve(), args.elf.resolve()):
@@ -382,7 +391,8 @@ def main(argv: list[str] | None = None) -> int:
         with args.elf.open("rb") as source:
             elf = source.read(MAX_ELF_SIZE + 1)
         binary, manifest = build_image(stock, elf, trial_defer_confirm=args.trial_defer_confirm,
-                                       recorder_hooks=args.recorder_hooks, wifi_guard=args.wifi_guard)
+                                       recorder_hooks=args.recorder_hooks, wifi_guard=args.wifi_guard,
+                                       wifi_hooks=args.wifi_hooks)
         write_package(args.output, binary, manifest, elf=elf)
         print(json.dumps({"status": manifest["status"], "ready_to_flash": False,
                           "output": str(args.output), "sha256": manifest["output"]["sha256"]}, indent=2))

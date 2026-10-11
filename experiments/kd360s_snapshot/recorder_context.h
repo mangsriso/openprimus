@@ -114,6 +114,21 @@ static int recorder_bind(void *context) {
     return cleared && removed ? RECORDER_BIND_FAILED : RECORDER_BIND_RETAIN;
 }
 
+/* Attach another task to the already published, boot-long key. Never replace
+ * another value or delete the producer's key after an attachment failure. */
+static int recorder_attach_existing(void *context) {
+    uint32_t key = 0;
+    if (!context || recorder_find_key(&key) != RECORDER_KEY_FOUND) return 0;
+    void *existing = recorder_rt_get(key);
+    if (existing == context) return 1;
+    if (existing != NULL) return 0;
+    int result = recorder_rt_set(key, context);
+    void *attached = recorder_rt_get(key);
+    if (result == 0 && attached == context) return 1;
+    if (attached == context) recorder_rt_set(key, NULL);
+    return 0;
+}
+
 static void *recorder_context(void) {
     uint32_t key = 0;
     if (recorder_find_key(&key) != RECORDER_KEY_FOUND) return NULL;

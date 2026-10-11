@@ -3,6 +3,7 @@
 #include "recorder_context.h"
 #include "retention.h"
 #include "transport.h"
+#include "wifi_gate.h"
 
 #define BOUNDARY_RESERVE 16u
 #define IDLE_OBSERVATION_MS 5000u
@@ -17,6 +18,7 @@ struct ipv4_address {
 _Static_assert(sizeof(struct ipv4_address) == 16, "lwIP sockaddr_in layout");
 struct context {
     struct snapshot_ring ring;
+    struct wifi_gate wifi;
     uint32_t ready;
     uint8_t session[8];
     uint32_t shot_id, shot_open, start_argument;
@@ -26,6 +28,20 @@ struct context {
     char ssid[33];
     char password[65];
 };
+static struct wifi_gate *wifi_current_gate(void) {
+    struct context *c = recorder_context();
+    return c && c->wifi.mutex ? &c->wifi : 0;
+}
+static int wifi_owner_allows_retry(void) {
+    uint32_t active = read32(0x3fc9d104u);
+    if (!active || read8(0x3fc9ca94u)
+        || read8(0x3fc9ca9du) || read8(0x3fc9ca9fu)
+        || read8(0x3fc9caa0u) || read8(0x3fc9caa1u)) return 0;
+    if (active == read32(0x3fca8564u) || active == read32(0x3fca84ccu)
+        || active == read32(0x3fca849cu) || active == read32(0x3fca8060u)
+        || active == read32(0x3fca85bcu) || active == read32(0x3fca86d0u)) return 0;
+    return !(wifi_get_mode() & 2);
+}
 static void zero(void *memory, uint32_t size) {
     volatile uint8_t *p = memory;
     while (size--) *p++ = 0;
@@ -42,9 +58,11 @@ static int copy_string(char *destination, unsigned capacity, uint32_t object) {
 }
 static void network_worker(void *argument) {
     struct context *c = argument;
-    /* Only the initial connection is ours; stock settings retain later Wi-Fi ownership. */
-    wifi_begin(WIFI_OBJECT, c->ssid, c->password, 0, 0, 1);
-    zero(c->password, sizeof(c->password));
+    if (!recorder_attach_existing(c)) {
+        store_release(&c->ready, 0);
+        zero(c->password, sizeof(c->password));
+        for (;;) delay(1000);
+    }
     struct ipv4_address destination;
     zero(&destination, sizeof(destination));
     destination.length = 16;
@@ -52,6 +70,7 @@ static void network_worker(void *argument) {
     destination.port = COLLECTOR_PORT_BE;
     destination.ip = COLLECTOR_IPV4_LE;
     int socket = -1;
+    int credentials_erased = 0;
     struct transmit_window window;
     zero(&window, sizeof(window));
     for (;;) {
@@ -60,8 +79,16 @@ static void network_worker(void *argument) {
             if (socket >= 0) udp_close(socket);
             socket = -1;
             zero(&window, sizeof(window));
+            if (wifi_retry(&c->wifi, c->ssid, c->password, millis()) == 2 && !credentials_erased) {
+                zero(c->password, sizeof(c->password));
+                credentials_erased = 1;
+            }
             delay(250);
             continue;
+        }
+        if (!credentials_erased && wifi_bootstrap_complete(&c->wifi)) {
+            zero(c->password, sizeof(c->password));
+            credentials_erased = 1;
         }
         if (socket < 0) {
             socket = udp_socket(2, 2, 0);
@@ -137,7 +164,7 @@ static void increment(struct context *c, uint32_t *counter) {
 }
 void recorder_after(uint32_t kind, uint32_t argument, uint32_t result) {
     struct context *c = recorder_context();
-    if (!c || !load_acquire(&c->ready)) return;
+    if (!c || !load_acquire(&c->ready) || wifi_current_task() != c->wifi.producer_task) return;
     uint32_t now = millis(), flags = 0;
     switch (kind) {
     case 2:
@@ -178,6 +205,8 @@ void snapshot_entry(void *argument) {
     struct context *c = allocate(sizeof(struct context));
     if (c) {
         zero(c, sizeof(*c));
+        c->wifi.producer_task = wifi_current_task();
+        c->wifi.boot_pending = 1;
         int bound = RECORDER_BIND_FAILED;
         if (copy_string(c->ssid, sizeof(c->ssid), 0x3fc9ff3cu) && c->ssid[0]
             && copy_string(c->password, sizeof(c->password), 0x3fc9ff2cu)) {
@@ -185,15 +214,22 @@ void snapshot_entry(void *argument) {
             fill_random(c->session, sizeof(c->session));
             bound = recorder_bind(c);
         }
-        if (bound != RECORDER_BIND_OK || create_task(network_worker, (const char *)task_name, 4096, c, 1, 0, 0) != 1) {
+        int started = 0;
+        if (bound == RECORDER_BIND_OK) {
+            c->wifi.mutex = wifi_gate_create(4);
+            if (c->wifi.mutex) {
+                store_release(&c->ready, 1);
+                started = create_task(network_worker, (const char *)task_name, 4096, c, 1, 0, 0) == 1;
+            }
+        }
+        if (!started) {
+            store_release(&c->ready, 0);
             zero(c->password, sizeof(c->password));
             if (bound == RECORDER_BIND_FAILED) {
                 if (c->ring.external_records) release(c->ring.external_records);
                 release(c);
             }
             c = 0;
-        } else {
-            store_release(&c->ready, 1);
         }
     }
     uint32_t last_observation = millis();

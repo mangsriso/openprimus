@@ -31,8 +31,8 @@ class SnapshotRuntimeTests(unittest.TestCase):
     def test_stock_call_order_observation_interval_raw_fields_and_clock_wrap(self):
         self.run_case('observation')
 
-    def test_failed_initial_begin_has_no_explicit_reconnect(self):
-        self.run_case('begin-once')
+    def test_failed_boot_begin_retries_with_ten_second_backoff_and_retains_credentials(self):
+        self.run_case('begin-retry')
 
     def test_disconnect_socket_and_send_failures_preserve_pending_records(self):
         self.run_case('reconnect')
@@ -54,3 +54,9 @@ class SnapshotRuntimeTests(unittest.TestCase):
 
     def test_window_batches_delayed_out_of_order_acks_and_partial_send_failure(self):
         self.run_case("window-delivery")
+
+    def test_wifi_owner_screen_service_flags_ap_mode_and_current_credentials(self):
+        self.run_case('wifi-ownership')
+
+    def test_worker_attachment_failure_disables_capture_and_preserves_single_producer(self):
+        self.run_case('worker-attachment')

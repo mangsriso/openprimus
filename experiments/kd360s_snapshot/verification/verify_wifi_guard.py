@@ -18,7 +18,7 @@ import kd360s_test_image as builder
 import kd360s_wifi_guard as guard
 
 
-def build(stock, toolchain, output):
+def build(stock, toolchain, output, wifi_hooks=False):
     with tempfile.TemporaryDirectory(prefix='wifi-guard-qemu-') as temporary:
         work = Path(temporary)
         entry = work / 'entry.S'
@@ -26,11 +26,25 @@ def build(stock, toolchain, output):
                          '.type snapshot_entry,@function\nsnapshot_entry:\nentry a1,32\nretw\n'
                          '.size snapshot_entry,.-snapshot_entry\n')
         payload = work / 'payload.elf'
-        subprocess.run([runner.tool(toolchain, 'gcc'), '-nostdlib', '-Wl,--build-id=none',
+        extra = []
+        if wifi_hooks:
+            wrappers = work / 'wrappers.c'
+            wrappers.write_text('''extern unsigned original_explicit_begin(unsigned,unsigned,unsigned,unsigned,unsigned,unsigned);
+extern unsigned original_saved_begin(unsigned);
+extern unsigned original_disconnect(unsigned,unsigned,unsigned);
+extern unsigned original_mode(unsigned);
+unsigned wrap_wifi_explicit(unsigned a,unsigned b,unsigned c,unsigned d,unsigned e,unsigned f) { return original_explicit_begin(a,b,c,d,e,f); }
+unsigned wrap_wifi_saved(unsigned a) { return original_saved_begin(a); }
+unsigned wrap_wifi_disconnect(unsigned a,unsigned b,unsigned c) { return original_disconnect(a,b,c); }
+unsigned wrap_wifi_mode(unsigned a) { return original_mode(a); }
+''')
+            extra = ['-DWIFI_HOOKS=1', '-Os', '-mlongcalls', '-fno-optimize-sibling-calls',
+                     '-fno-ipa-icf', str(wrappers), str(ROOT / 'experiments/kd360s_snapshot/wifi_hooks.S')]
+        subprocess.run([runner.tool(toolchain, 'gcc')] + extra + ['-nostdlib', '-Wl,--build-id=none',
                         '-Wl,-T,' + str(ROOT / 'experiments/kd360s_snapshot/snapshot.ld'),
                         str(entry), str(ROOT / 'experiments/kd360s_snapshot/wifi_guard.S'),
                         '-o', str(payload)], check=True)
-        image, manifest = builder.build_image(stock, payload.read_bytes(), wifi_guard=True)
+        image, manifest = builder.build_image(stock, payload.read_bytes(), wifi_guard=True, wifi_hooks=wifi_hooks)
         original = firmware.verify_bytes(stock)
         code = original.segments[3]
         size = manifest['changes']['code_segment_size']['after']
@@ -55,10 +69,10 @@ def build(stock, toolchain, output):
     return manifest
 
 
-def debugger_script(elf, port):
+def debugger_script(elf, port, wifi_hooks=False):
     path = str(elf).replace('\\', '\\\\').replace('"', '\\"')
     lines = ['set pagination off', 'set confirm off', f'file "{path}"',
-             f'target remote 127.0.0.1:{port}', 'hbreak *0x4201d3db', 'hbreak *0x4201d43d']
+             f'target remote 127.0.0.1:{port}', f'hbreak *{0x4201d3e1 if wifi_hooks else 0x4201d3db}', 'hbreak *0x4201d43d']
 
     def check(expression, value, label):
         lines.extend([f'if (unsigned int)({expression}) != {value}',
@@ -87,11 +101,11 @@ def debugger_script(elf, port):
                     ('unsigned char', 0x3fca1516, 1), ('unsigned int', 0x3fca1518, 0x12345678)]:
                 lines.append(f'set {{{kind}}}{address}={value}')
             lines.append('continue')
-            check('$pc', 0x4201d3db if owned and pending else 0x4201d43d, label + '_continuation')
+            check('$pc', (0x4201d3e1 if wifi_hooks else 0x4201d3db) if owned and pending else 0x4201d43d, label + '_continuation')
             for index in [0, 1, 5, 6, 7, 10, 11, 12, 13, 14, 15]:
-                check('$ar' + str(index), 0x3fce0000 if index == 1 else 0x11000000 + index,
+                check('$ar' + str(index), (0 if wifi_hooks and owned and pending and index in (11, 12) else 0x3fce0000 if index == 1 else 0x11000000 + index),
                       label + '_a' + str(index))
-            for expression, value in [('$ar2', 0x3fc9ca60), ('$ar3', expected_pending),
+            for expression, value in [('$ar2', 0x3fc9ca60), ('$ar3', 0 if wifi_hooks and owned and pending else expected_pending),
                                       ('$ar4', 0x3fca1514), ('$sar', 13), ('$windowbase', 0),
                                       ('$windowstart', 1),
                                       ('*(unsigned char*)0x3fca1514', expected_pending),
@@ -112,12 +126,13 @@ def main():
     parser.add_argument('--toolchain', type=Path, required=True)
     parser.add_argument('--qemu', type=Path, required=True)
     parser.add_argument('--stock', type=Path, required=True)
+    parser.add_argument('--wifi-hooks', action='store_true')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    manifest = build(args.stock.read_bytes(), args.toolchain, args.output)
+    manifest = build(args.stock.read_bytes(), args.toolchain, args.output, args.wifi_hooks)
     results = {label: runner.execute(args.qemu, args.toolchain, args.output / (label + '.elf'),
-                                    args.output, label, script_factory=debugger_script)
+                                    args.output, label, script_factory=lambda elf, port: debugger_script(elf, port, args.wifi_hooks))
                for label in ('positive', 'negative')}
     passed = (results['positive']['exit_code'] == 0 and len(results['positive']['passed']) == 27
               and not results['positive']['failures'] and results['negative']['exit_code'] != 0
